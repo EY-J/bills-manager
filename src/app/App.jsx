@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "../components/layout/Header.jsx";
+import MobileBottomNav from "../components/layout/MobileBottomNav.jsx";
 import SettingsDialog from "../components/layout/SettingsDialog.jsx";
 import DueSoonBanner from "../features/bills/components/DueSoonBanner.jsx";
 import BillsTable from "../features/bills/components/BillsTable.jsx";
@@ -12,9 +13,16 @@ import {
   validateBackupPayload,
 } from "../features/bills/billsService.js";
 
-import { useBills } from "../features/bills/hooks/useBills.js";
+import {
+  STORAGE_WARNING_EVENT,
+  useBills,
+} from "../features/bills/hooks/useBills.js";
 import { computeBillMeta } from "../features/bills/billsUtils.js";
 import { useDueSoonNotifications } from "../features/bills/hooks/useDueSoonNotifications.js";
+
+const MAX_RESTORE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB guard against UI freeze on huge imports.
+const STORAGE_WARNING_MESSAGE = "Storage unavailable. Changes may not persist.";
+const MAX_UNDO_QUEUE = 8;
 
 export default function App() {
   const {
@@ -45,7 +53,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
-  const [undoToast, setUndoToast] = useState(null);
+  const [undoQueue, setUndoQueue] = useState([]);
   const [noticeToast, setNoticeToast] = useState(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -58,6 +66,53 @@ export default function App() {
       return false;
     }
   });
+  const [tableDensity, setTableDensity] = useState(() => {
+    try {
+      return localStorage.getItem("bills_table_density") === "compact"
+        ? "compact"
+        : "comfortable";
+    } catch {
+      return "comfortable";
+    }
+  });
+  const [notificationMode, setNotificationMode] = useState(() => {
+    try {
+      return localStorage.getItem("bills_notify_mode") === "instant"
+        ? "instant"
+        : "digest";
+    } catch {
+      return "digest";
+    }
+  });
+  const [riskRestorePoint, setRiskRestorePoint] = useState(null);
+  const [mobileTab, setMobileTab] = useState("bills");
+  const [actionLoadingMap, setActionLoadingMap] = useState({});
+  const actionLoadingRef = useRef(new Set());
+  const storageWarningCooldownRef = useRef(0);
+  const dueSoonRef = useRef(null);
+  const billsRef = useRef(null);
+  const statsRef = useRef(null);
+  const hasBlockingModal = settingsOpen || editorOpen || detailsOpen || clearConfirmOpen;
+  const currentUndoToast = undoQueue[0] || null;
+  const queuedUndoCount = Math.max(undoQueue.length - 1, 0);
+
+  const pushStorageWarning = useCallback(() => {
+    const now = Date.now();
+    if (now - storageWarningCooldownRef.current < 2500) return;
+    storageWarningCooldownRef.current = now;
+    setNoticeToast(STORAGE_WARNING_MESSAGE);
+  }, []);
+
+  const enqueueUndoToast = useCallback((message, onUndo) => {
+    setUndoQueue((prev) => [
+      {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        message,
+        onUndo,
+      },
+      ...prev,
+    ].slice(0, MAX_UNDO_QUEUE));
+  }, []);
 
   const enriched = useMemo(() => {
     return bills
@@ -128,10 +183,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!undoToast) return;
-    const t = setTimeout(() => setUndoToast(null), 5000);
+    if (!currentUndoToast) return;
+    const t = setTimeout(() => {
+      setUndoQueue((prev) => prev.slice(1));
+    }, 5000);
     return () => clearTimeout(t);
-  }, [undoToast]);
+  }, [currentUndoToast]);
 
   useEffect(() => {
     if (!noticeToast) return;
@@ -140,12 +197,36 @@ export default function App() {
   }, [noticeToast]);
 
   useEffect(() => {
+    function onStorageWarning() {
+      pushStorageWarning();
+    }
+    window.addEventListener(STORAGE_WARNING_EVENT, onStorageWarning);
+    return () => window.removeEventListener(STORAGE_WARNING_EVENT, onStorageWarning);
+  }, [pushStorageWarning]);
+
+  useEffect(() => {
     try {
       localStorage.setItem("bills_compact_mode", String(compactMode));
     } catch {
-      // ignore
+      pushStorageWarning();
     }
-  }, [compactMode]);
+  }, [compactMode, pushStorageWarning]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("bills_table_density", tableDensity);
+    } catch {
+      pushStorageWarning();
+    }
+  }, [tableDensity, pushStorageWarning]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("bills_notify_mode", notificationMode);
+    } catch {
+      pushStorageWarning();
+    }
+  }, [notificationMode, pushStorageWarning]);
 
   useEffect(() => {
     if (!clearConfirmOpen) return;
@@ -203,12 +284,12 @@ export default function App() {
     const totalDueThisMonth = activeEnriched.reduce((sum, b) => {
       const due = b.meta.dueDateObj;
       if (due.getMonth() !== month || due.getFullYear() !== year) return sum;
-      return sum + Number(b.amount || 0);
+      return sum + Number((b.meta.remainingAmount ?? b.amount) || 0);
     }, 0);
 
     const overdueAmount = activeEnriched.reduce((sum, b) => {
       if (!b.meta.overdue) return sum;
-      return sum + Number(b.amount || 0);
+      return sum + Number((b.meta.remainingAmount ?? b.amount) || 0);
     }, 0);
 
     const paidThisMonth = activeEnriched.reduce((sum, b) => {
@@ -239,6 +320,7 @@ export default function App() {
   useDueSoonNotifications({
     enabled: notifyEnabled,
     dueSoonBills: dueSoonForNotifications,
+    mode: notificationMode,
   });
 
   useEffect(() => {
@@ -294,6 +376,37 @@ export default function App() {
     }
   }
 
+  async function handleNotifyToggle(nextEnabled) {
+    if (!nextEnabled) {
+      setNotifyEnabled(false);
+      return;
+    }
+
+    if (!("Notification" in window)) {
+      setNotifyEnabled(false);
+      setNoticeToast("Notifications are not supported.");
+      return;
+    }
+
+    try {
+      if (Notification.permission === "granted") {
+        setNotifyEnabled(true);
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") {
+        setNotifyEnabled(true);
+      } else {
+        setNotifyEnabled(false);
+        setNoticeToast("Allow notifications first.");
+      }
+    } catch {
+      setNotifyEnabled(false);
+      setNoticeToast("Could not enable notifications.");
+    }
+  }
+
   function snapshotBills() {
     try {
       return JSON.parse(JSON.stringify(bills));
@@ -302,28 +415,80 @@ export default function App() {
     }
   }
 
+  function createRiskRestorePoint(reason) {
+    setRiskRestorePoint({
+      reason,
+      createdAt: Date.now(),
+      bills: snapshotBills(),
+      notifyEnabled,
+      notificationMode,
+      tableDensity,
+      compactMode,
+    });
+  }
+
+  function rollbackRiskRestorePoint() {
+    if (!riskRestorePoint) {
+      setNoticeToast("No restore point available.");
+      return;
+    }
+    replaceAllBills(Array.isArray(riskRestorePoint.bills) ? riskRestorePoint.bills : []);
+    setNotifyEnabled(Boolean(riskRestorePoint.notifyEnabled));
+    setNotificationMode(
+      riskRestorePoint.notificationMode === "instant" ? "instant" : "digest"
+    );
+    setTableDensity(
+      riskRestorePoint.tableDensity === "compact" ? "compact" : "comfortable"
+    );
+    setCompactMode(Boolean(riskRestorePoint.compactMode));
+    setRiskRestorePoint(null);
+    setNoticeToast("Rolled back to last restore point.");
+  }
+
   function handleDeleteWithUndo(id) {
     const before = snapshotBills();
     deleteBill(id);
-    setUndoToast({
-      message: "Bill deleted",
-      onUndo: () => replaceAllBills(before),
-    });
+    enqueueUndoToast("Bill deleted", () => replaceAllBills(before));
   }
 
   function handleClearWithUndo() {
     const before = snapshotBills();
+    createRiskRestorePoint("clear");
     clearAll();
-    setUndoToast({
-      message: "All bills cleared",
-      onUndo: () => replaceAllBills(before),
-    });
+    enqueueUndoToast("All bills cleared", () => replaceAllBills(before));
   }
 
   const selectedBill = useMemo(
     () => bills.find((b) => b.id === selectedId) || null,
     [bills, selectedId]
   );
+
+  const selectedActionLoading = useMemo(() => {
+    if (!selectedBill) {
+      return {
+        markPaid: false,
+        paymentSubmit: false,
+        paymentDeletingId: null,
+        notesSave: false,
+      };
+    }
+
+    const billId = selectedBill.id;
+    const paymentDeletePrefix = `bill:${billId}:paymentDelete:`;
+    const paymentDeleteKey = Object.keys(actionLoadingMap).find((k) =>
+      k.startsWith(paymentDeletePrefix)
+    );
+
+    return {
+      markPaid: Boolean(actionLoadingMap[`bill:${billId}:markPaid`]),
+      paymentSubmit: Boolean(actionLoadingMap[`bill:${billId}:paymentSubmit`]),
+      paymentDeletingId: paymentDeleteKey
+        ? paymentDeleteKey.slice(paymentDeletePrefix.length)
+        : null,
+      notesSave: Boolean(actionLoadingMap[`bill:${billId}:notesSave`]),
+    };
+  }, [selectedBill, actionLoadingMap]);
+
   const editingBill = useMemo(
     () => bills.find((b) => b.id === editingId) || null,
     [bills, editingId]
@@ -352,10 +517,7 @@ export default function App() {
     const before = snapshotBills();
     setNoticeToast(null);
     action();
-    setUndoToast({
-      message,
-      onUndo: () => replaceAllBills(before),
-    });
+    enqueueUndoToast(message, () => replaceAllBills(before));
   }
 
   function handleArchiveToggleWithUndo(id, archived) {
@@ -370,9 +532,39 @@ export default function App() {
     });
   }
 
-  function handleMarkPaidWithUndo(id) {
-    runWithUndo("Marked as paid", () => {
-      markPaidAndAdvance(id);
+  function setActionLoading(key, value) {
+    setActionLoadingMap((prev) => {
+      if (value) return { ...prev, [key]: true };
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  async function runWithActionLoading(key, action, minMs = 420) {
+    if (!key || actionLoadingRef.current.has(key)) return;
+    actionLoadingRef.current.add(key);
+    const started = Date.now();
+    setActionLoading(key, true);
+    try {
+      await Promise.resolve(action());
+    } finally {
+      const elapsed = Date.now() - started;
+      const waitMs = Math.max(0, minMs - elapsed);
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+      actionLoadingRef.current.delete(key);
+      setActionLoading(key, false);
+    }
+  }
+
+  async function handleMarkPaidWithUndo(id) {
+    await runWithActionLoading(`bill:${id}:markPaid`, () => {
+      runWithUndo("Marked as paid", () => {
+        markPaidAndAdvance(id);
+      });
     });
   }
 
@@ -461,6 +653,16 @@ export default function App() {
       };
     }
 
+    if (Number(file.size || 0) > MAX_RESTORE_FILE_BYTES) {
+      return {
+        ok: false,
+        state: "error",
+        title: "File too large",
+        message: "This backup file is too large to safely import on this device.",
+        hint: "Use a backup under 2 MB, then try again.",
+      };
+    }
+
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
@@ -521,9 +723,15 @@ export default function App() {
         };
       }
 
+      const beforeBills = snapshotBills();
+      const beforeNotifyEnabled = notifyEnabled;
+      createRiskRestorePoint("restore");
       replaceAllBills(payload.bills);
       setNotifyEnabled(Boolean(payload.notifyEnabled));
-      setNoticeToast("Backup restored.");
+      enqueueUndoToast("Backup restored", () => {
+        replaceAllBills(beforeBills);
+        setNotifyEnabled(beforeNotifyEnabled);
+      });
       return { ok: true };
     } catch {
       return {
@@ -536,8 +744,14 @@ export default function App() {
     }
   }
 
+  function scrollToRef(ref) {
+    const node = ref?.current;
+    if (!node) return;
+    node.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <div className={`app ${compactMode ? "compactMode" : ""}`}>
+    <div className={`app ${compactMode ? "compactMode" : ""} density-${tableDensity}`}>
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
         onAdd={() => {
@@ -549,10 +763,17 @@ export default function App() {
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        maxRestoreFileBytes={MAX_RESTORE_FILE_BYTES}
         notifyEnabled={notifyEnabled}
-        setNotifyEnabled={setNotifyEnabled}
+        setNotifyEnabled={handleNotifyToggle}
+        notificationMode={notificationMode}
+        setNotificationMode={setNotificationMode}
         compactMode={compactMode}
         setCompactMode={setCompactMode}
+        tableDensity={tableDensity}
+        setTableDensity={setTableDensity}
+        hasRiskRestorePoint={Boolean(riskRestorePoint)}
+        onRollbackRiskRestore={rollbackRiskRestorePoint}
         canInstall={Boolean(installPromptEvent)}
         onInstall={handleInstallApp}
         onBackup={() => {
@@ -580,15 +801,17 @@ export default function App() {
       />
 
       <div className="container">
-        <DueSoonBanner
-          dueSoonBills={dueSoonList}
-          onOpen={(id) => {
-            setSelectedId(id);
-            setDetailsOpen(true);
-          }}
-        />
+        <div ref={dueSoonRef}>
+          <DueSoonBanner
+            dueSoonBills={dueSoonList}
+            onOpen={(id) => {
+              setSelectedId(id);
+              setDetailsOpen(true);
+            }}
+          />
+        </div>
 
-        <div className="card billsCard">
+        <div ref={billsRef} className="card billsCard">
           <div className="cardHeader billsHeader">
             <div className="billsIntro">
               <div className="billsTitleRow">
@@ -706,7 +929,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="billsMiniStats" aria-label="Bills totals">
+          <div ref={statsRef} className="billsMiniStats" aria-label="Bills totals">
             <div className="billsMiniStat">
               <span className="billsMiniStatLabel">Due this month</span>
               <strong className="billsMiniStatValue">
@@ -736,6 +959,9 @@ export default function App() {
             <BillsTable
               bills={filtered}
               query={query}
+              isMarkPaidLoading={(id) =>
+                Boolean(actionLoadingMap[`bill:${id}:markPaid`])
+              }
               onRowClick={(id) => {
                 setSelectedId(id);
                 setDetailsOpen(true);
@@ -754,23 +980,36 @@ export default function App() {
         </div>
       </div>
 
-      <BillEditorDialog
-        open={editorOpen}
-        onClose={() => setEditorOpen(false)}
-        bill={editingBill}
-        onSave={(data) => {
-          if (editingBill) {
-            runWithUndo("Bill updated", () => {
-              updateBill(editingBill.id, data);
-            });
-          } else {
-            runWithUndo("Bill added", () => {
-              addBill(data);
-            });
-          }
-          setEditorOpen(false);
-        }}
-      />
+      {!hasBlockingModal ? (
+        <MobileBottomNav
+          active={mobileTab}
+          onSelect={(tab) => {
+            setMobileTab(tab);
+            if (tab === "bills") scrollToRef(billsRef);
+            if (tab === "due") scrollToRef(dueSoonRef);
+            if (tab === "stats") scrollToRef(statsRef);
+          }}
+        />
+      ) : null}
+
+      {editorOpen ? (
+        <BillEditorDialog
+          onClose={() => setEditorOpen(false)}
+          bill={editingBill}
+          onSave={(data) => {
+            if (editingBill) {
+              runWithUndo("Bill updated", () => {
+                updateBill(editingBill.id, data);
+              });
+            } else {
+              runWithUndo("Bill added", () => {
+                addBill(data);
+              });
+            }
+            setEditorOpen(false);
+          }}
+        />
+      ) : null}
 
       <BillDetailsDialog
         open={detailsOpen}
@@ -784,32 +1023,48 @@ export default function App() {
         }}
         onMarkPaid={() => {
           if (!selectedBill) return;
-          handleMarkPaidWithUndo(selectedBill.id);
+          return handleMarkPaidWithUndo(selectedBill.id);
         }}
-        onAddPayment={(payment) => {
+        markPaidLoading={selectedActionLoading.markPaid}
+        onAddPayment={async (payment) => {
           if (!selectedBill) return;
-          runWithUndo("Payment added", () => {
-            addPaymentAndAdvance(selectedBill.id, payment);
+          await runWithActionLoading(`bill:${selectedBill.id}:paymentSubmit`, () => {
+            runWithUndo("Payment added", () => {
+              addPaymentAndAdvance(selectedBill.id, payment);
+            });
           });
         }}
-        onUpdatePayment={(paymentId, patch) => {
+        paymentSubmitLoading={selectedActionLoading.paymentSubmit}
+        onUpdatePayment={async (paymentId, patch) => {
           if (!selectedBill) return;
-          runWithUndo("Payment updated", () => {
-            updatePayment(selectedBill.id, paymentId, patch);
+          await runWithActionLoading(`bill:${selectedBill.id}:paymentSubmit`, () => {
+            runWithUndo("Payment updated", () => {
+              updatePayment(selectedBill.id, paymentId, patch);
+            });
           });
         }}
-        onDeletePayment={(paymentId) => {
+        paymentDeletingId={selectedActionLoading.paymentDeletingId}
+        onDeletePayment={async (paymentId) => {
           if (!selectedBill) return;
-          runWithUndo("Payment deleted", () => {
-            deletePayment(selectedBill.id, paymentId);
+          await runWithActionLoading(
+            `bill:${selectedBill.id}:paymentDelete:${paymentId}`,
+            () => {
+              runWithUndo("Payment deleted", () => {
+                deletePayment(selectedBill.id, paymentId);
+              });
+            },
+            340
+          );
+        }}
+        onUpdateNotes={async (notes) => {
+          if (!selectedBill) return;
+          await runWithActionLoading(`bill:${selectedBill.id}:notesSave`, () => {
+            runWithUndo("Notes updated", () => {
+              updateNotes(selectedBill.id, notes);
+            });
           });
         }}
-        onUpdateNotes={(notes) => {
-          if (!selectedBill) return;
-          runWithUndo("Notes updated", () => {
-            updateNotes(selectedBill.id, notes);
-          });
-        }}
+        notesSaveLoading={selectedActionLoading.notesSave}
         onArchiveToggle={(archived) => {
           if (!selectedBill) return;
           handleArchiveToggleWithUndo(selectedBill.id, archived);
@@ -873,9 +1128,9 @@ export default function App() {
         </div>
       ) : null}
 
-      {undoToast || noticeToast ? (
+      {currentUndoToast || noticeToast ? (
         <div className="toastDock">
-          {!undoToast && noticeToast ? (
+          {!currentUndoToast && noticeToast ? (
             <div className="appToast noticeToast" role="status" aria-live="polite">
               <span className="noticeToastIcon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none">
@@ -892,7 +1147,7 @@ export default function App() {
             </div>
           ) : null}
 
-          {undoToast ? (
+          {currentUndoToast ? (
             <div className="appToast undoToast" role="status" aria-live="polite">
               <span className="noticeToastIcon undoToastIcon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none">
@@ -905,13 +1160,16 @@ export default function App() {
                   />
                 </svg>
               </span>
-              <span>{undoToast.message}</span>
+              <span>{currentUndoToast.message}</span>
+              {queuedUndoCount > 0 ? (
+                <span className="muted small">{`+${queuedUndoCount} more`}</span>
+              ) : null}
               <button
                 type="button"
                 className="toastInlineAction"
                 onClick={() => {
-                  undoToast.onUndo?.();
-                  setUndoToast(null);
+                  currentUndoToast.onUndo?.();
+                  setUndoQueue((prev) => prev.slice(1));
                 }}
               >
                 Undo

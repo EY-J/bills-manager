@@ -5,7 +5,7 @@ import {
   startOfToday,
   toISODate,
 } from "../../../lib/date/date.js";
-import { computeBillMeta, getPlanProgress } from "../billsUtils.js";
+import { computeBillMeta } from "../billsUtils.js";
 const { useEffect } = React;
 
 function formatCadenceLabel(cadence) {
@@ -27,18 +27,21 @@ export default function BillDetailsDialog({
   bill,
   onEdit,
   onMarkPaid,
+  markPaidLoading = false,
   onArchiveToggle,
   onSnoozeReminder,
   onDuplicate,
   onDelete,
   onAddPayment,
+  paymentSubmitLoading = false,
   onUpdatePayment,
+  paymentDeletingId = null,
   onDeletePayment,
   onUpdateNotes,
+  notesSaveLoading = false,
 }) {
   // Hooks must always run (even if open is false)
   const meta = useMemo(() => (bill ? computeBillMeta(bill) : null), [bill]);
-  const plan = useMemo(() => getPlanProgress(bill), [bill]);
 
   const [tab, setTab] = useState("overview");
   const [paymentDraft, setPaymentDraft] = useState(() =>
@@ -75,6 +78,51 @@ export default function BillDetailsDialog({
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [actionsMenuOpen]);
+
+  const paymentBusy = paymentSubmitLoading || Boolean(paymentDeletingId);
+
+  async function handlePaymentSubmit() {
+    if (paymentSubmitLoading) return;
+    const amt = Number(paymentDraft.amount);
+    if (Number.isNaN(amt) || amt < 0) return;
+
+    if (editingPaymentId) {
+      await Promise.resolve(
+        onUpdatePayment?.(editingPaymentId, {
+          date: paymentDraft.date,
+          amount: amt,
+          note: paymentDraft.note.trim(),
+        })
+      );
+    } else {
+      await Promise.resolve(
+        onAddPayment?.({
+          id: crypto.randomUUID(),
+          date: paymentDraft.date,
+          amount: amt,
+          note: paymentDraft.note.trim(),
+        })
+      );
+    }
+
+    setEditingPaymentId(null);
+    setPaymentDraft(buildPaymentDraft(bill));
+  }
+
+  async function handleDeletePayment(paymentId) {
+    if (!paymentId || paymentDeletingId === paymentId) return;
+    await Promise.resolve(onDeletePayment?.(paymentId));
+
+    if (editingPaymentId === paymentId) {
+      setEditingPaymentId(null);
+      setPaymentDraft(buildPaymentDraft(bill));
+    }
+  }
+
+  async function handleNotesSave() {
+    if (notesSaveLoading) return;
+    await Promise.resolve(onUpdateNotes?.(notesDraft));
+  }
 
   // âœ… Safe conditional render after hooks
   if (!open) return null;
@@ -148,11 +196,11 @@ export default function BillDetailsDialog({
                     }
                   />
                   <Stat
-                    label="Months left"
+                    label="Cycle balance"
                     value={
-                      plan.enabled
-                        ? `${plan.monthsLeft} of ${plan.totalMonths}`
-                        : "Not set"
+                      meta?.remainingAmount > 0
+                        ? formatMoney(meta.remainingAmount)
+                        : "Settled"
                     }
                   />
                   <Stat
@@ -169,10 +217,10 @@ export default function BillDetailsDialog({
                   <div className="actions billOverviewActions">
                     <button
                       className="btn primary"
-                      disabled={bill.archived}
+                      disabled={bill.archived || markPaidLoading}
                       onClick={onMarkPaid}
                     >
-                      Mark paid
+                      {markPaidLoading ? "Marking..." : "Mark paid"}
                     </button>
                     <button className="btn" onClick={onEdit}>
                       Edit
@@ -282,7 +330,8 @@ export default function BillDetailsDialog({
                 <div className="cardInner">
                   <div className="bold">Add payment</div>
                   <div className="muted small">
-                    Adds a payment record and advances due date to next month.
+                    Adds a payment record. Due date advances only after the
+                    cycle balance is fully paid.
                   </div>
 
                   {/* âœ… Responsive grid to prevent overflow */}
@@ -293,6 +342,7 @@ export default function BillDetailsDialog({
   className="input dateField"
   type="date"
   value={paymentDraft.date}
+  disabled={paymentBusy}
   onChange={(e) =>
     setPaymentDraft((d) => ({ ...d, date: e.target.value }))
   }
@@ -306,6 +356,7 @@ export default function BillDetailsDialog({
   className="input amountField"
   inputMode="decimal"
   value={paymentDraft.amount}
+  disabled={paymentBusy}
   onChange={(e) =>
     setPaymentDraft((d) => ({ ...d, amount: e.target.value }))
   }
@@ -318,6 +369,7 @@ export default function BillDetailsDialog({
                       <input
                         className="input"
                         value={paymentDraft.note}
+                        disabled={paymentBusy}
                         onChange={(e) =>
                           setPaymentDraft((d) => ({
                             ...d,
@@ -330,36 +382,22 @@ export default function BillDetailsDialog({
 
                     <button
                       className="btn primary"
-                      onClick={() => {
-                        const amt = Number(paymentDraft.amount);
-                        if (Number.isNaN(amt) || amt < 0) return;
-
-                        if (editingPaymentId) {
-                          onUpdatePayment?.(editingPaymentId, {
-                            date: paymentDraft.date,
-                            amount: amt,
-                            note: paymentDraft.note.trim(),
-                          });
-                        } else {
-                          onAddPayment({
-                            id: crypto.randomUUID(),
-                            date: paymentDraft.date,
-                            amount: amt,
-                            note: paymentDraft.note.trim(),
-                          });
-                        }
-
-                        // reset draft after save
-                        setEditingPaymentId(null);
-                        setPaymentDraft(buildPaymentDraft(bill));
-                      }}
+                      disabled={paymentBusy}
+                      onClick={handlePaymentSubmit}
                     >
-                      {editingPaymentId ? "Save changes" : "+ Add payment"}
+                      {paymentSubmitLoading
+                        ? editingPaymentId
+                          ? "Saving..."
+                          : "Adding..."
+                        : editingPaymentId
+                        ? "Save changes"
+                        : "+ Add payment"}
                     </button>
 
                     {editingPaymentId ? (
                       <button
                         className="btn"
+                        disabled={paymentBusy}
                         onClick={() => {
                           setEditingPaymentId(null);
                           setPaymentDraft(buildPaymentDraft(bill));
@@ -404,6 +442,7 @@ export default function BillDetailsDialog({
                                   <div className="paymentRowActions">
                                     <button
                                       className="btn small"
+                                      disabled={paymentBusy}
                                       onClick={() => {
                                         setEditingPaymentId(p.id);
                                         setPaymentDraft({
@@ -417,9 +456,10 @@ export default function BillDetailsDialog({
                                     </button>
                                     <button
                                       className="btn small danger"
-                                      onClick={() => onDeletePayment?.(p.id)}
+                                      disabled={paymentBusy}
+                                      onClick={() => handleDeletePayment(p.id)}
                                     >
-                                      Delete
+                                      {paymentDeletingId === p.id ? "Deleting..." : "Delete"}
                                     </button>
                                   </div>
                                 ) : (
@@ -444,6 +484,7 @@ export default function BillDetailsDialog({
                   <textarea
                     className="textarea"
                     value={notesDraft}
+                    disabled={notesSaveLoading}
                     onChange={(e) => setNotesDraft(e.target.value)}
                     placeholder="Add notes..."
                   />
@@ -452,15 +493,17 @@ export default function BillDetailsDialog({
                 <div className="actions right">
                   <button
                     className="btn"
+                    disabled={notesSaveLoading}
                     onClick={() => setNotesDraft(bill.notes || "")}
                   >
                     Reset
                   </button>
                   <button
                     className="btn primary"
-                    onClick={() => onUpdateNotes(notesDraft)}
+                    disabled={notesSaveLoading}
+                    onClick={handleNotesSave}
                   >
-                    Save notes
+                    {notesSaveLoading ? "Saving..." : "Save notes"}
                   </button>
                 </div>
               </div>

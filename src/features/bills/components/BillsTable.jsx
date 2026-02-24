@@ -3,8 +3,23 @@ import { formatMoney, formatShortDate } from "../../../lib/date/date.js";
 import { getPlanProgress } from "../billsUtils.js";
 
 function getBillStatus(bill) {
-  if (bill.archived) return { label: "Archived", tone: "upcoming" };
-  if (bill.meta.overdue) return { label: "Overdue", tone: "overdue" };
+  if (bill.archived) return { label: "Archived", tone: "archived" };
+  if (bill.meta.overdue) {
+    if (bill.meta.partiallyPaid) {
+      return {
+        label: `Overdue - ${formatMoney(bill.meta.remainingAmount)} left`,
+        tone: "overdue",
+      };
+    }
+    return { label: "Overdue", tone: "overdue" };
+  }
+
+  if (bill.meta.partiallyPaid) {
+    return {
+      label: `Partial - ${formatMoney(bill.meta.remainingAmount)} left`,
+      tone: "partial",
+    };
+  }
 
   if (bill.meta.daysToDue === 0) {
     return { label: "Due today", tone: "dueSoon" };
@@ -28,9 +43,19 @@ function getBillStatus(bill) {
   return { label: "Upcoming", tone: "upcoming" };
 }
 
+function isInteractiveTarget(target) {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      "button, a, input, select, textarea, [role='button'], [role='menuitem']"
+    )
+  );
+}
+
 export default function BillsTable({
   bills,
   query,
+  isMarkPaidLoading,
   onRowClick,
   onEdit,
   onDelete,
@@ -71,13 +96,22 @@ export default function BillsTable({
       <table className="table billsTable">
         <thead>
           <tr>
-            <th>Bill name</th>
+            <th>
+              <span className="headerLabelDesktop">Bill name</span>
+              <span className="headerLabelMobile">Bill</span>
+            </th>
             <th>Category</th>
-            <th>Due date</th>
+            <th>
+              <span className="headerLabelDesktop">Due date</span>
+              <span className="headerLabelMobile">Due</span>
+            </th>
             <th className="right">Amount</th>
             <th>Status</th>
             <th>Last paid</th>
-            <th className="right">Actions</th>
+            <th className="actionsHeaderCell" aria-label="More actions">
+              <span className="headerLabelDesktop">More</span>
+              <span className="headerLabelMobile" aria-hidden="true"></span>
+            </th>
           </tr>
         </thead>
 
@@ -85,6 +119,21 @@ export default function BillsTable({
           {bills.map((b) => {
             const plan = getPlanProgress(b);
             const status = getBillStatus(b);
+            const markPaidLoading = Boolean(isMarkPaidLoading?.(b.id));
+            const mobileStatus =
+              status.tone === "overdue"
+                ? "Overdue"
+                : status.tone === "partial"
+                  ? "Partial"
+                  : status.tone === "dueSoon"
+                    ? b.meta.daysToDue === 0
+                      ? "Due today"
+                      : "Due soon"
+                    : status.tone === "paid"
+                      ? "Paid"
+                      : status.tone === "archived"
+                        ? "Archived"
+                        : "Upcoming";
             const noteHit =
               q.length > 0 &&
               (b.notes || "").toLowerCase().includes(q.toLowerCase());
@@ -100,7 +149,15 @@ export default function BillsTable({
               <tr
                 key={b.id}
                 className={`row ${showDetails ? "expanded" : ""}`}
+                tabIndex={0}
+                aria-label={`Open ${b.name} details`}
                 onClick={() => onRowClick(b.id)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  if (isInteractiveTarget(event.target)) return;
+                  event.preventDefault();
+                  onRowClick(b.id);
+                }}
               >
                 <td>
                   <div className="billName">
@@ -108,7 +165,7 @@ export default function BillsTable({
                   </div>
 
                   <div className="muted small billMetaLine">
-                    <span>{compactMetaParts.join(" • ")}</span>
+                    <span>{compactMetaParts.join(" | ")}</span>
                     <button
                       type="button"
                       className={`billExpandHint ${showDetails ? "open" : ""}`}
@@ -128,6 +185,23 @@ export default function BillsTable({
                         />
                       </svg>
                     </button>
+                  </div>
+
+                  <div className="muted small billMobileMeta">
+                    <div className="billMobileMetaPrimary">
+                      <span className="billMobileCategory">{b.category || "-"}</span>
+                      <span className="billMetaDivider">|</span>
+                      <span className="billMobileAmount">{formatMoney(b.amount)}</span>
+                      <span className="billMetaDivider">|</span>
+                      <span className={`billMobileStatus billMobileStatus-${status.tone}`}>
+                        {mobileStatus}
+                      </span>
+                    </div>
+                    {b.meta.lastPaid ? (
+                      <div className="billMobileMetaSecondary">
+                        {`Paid ${formatShortDate(b.meta.lastPaid)}`}
+                      </div>
+                    ) : null}
                   </div>
 
                   {showDetails ? (
@@ -156,23 +230,33 @@ export default function BillsTable({
 
                 <td>
                   <div className="dueCell">
-                    <span>{formatShortDate(b.dueDate)}</span>
-                    <span className="muted small">
+                    <span className="dueDesktopText">{formatShortDate(b.dueDate)}</span>
+                    <span className="dueMobileText">{formatMobileDate(b.dueDate)}</span>
+                    <span className="muted small dueDesktopDelta">
                       (
                       {b.meta.daysToDue < 0
                         ? `${Math.abs(b.meta.daysToDue)}d late`
                         : `${b.meta.daysToDue}d`}
                       )
                     </span>
+                    <span className="muted small dueMobileDelta">
+                      {formatMobileDueDelta(b.meta.daysToDue)}
+                    </span>
                   </div>
                 </td>
 
                 <td className="right bold">
                   {renderHighlightedText(formatMoney(b.amount), q)}
+                  {b.meta.remainingAmount > 0 ? (
+                    <div className="muted small remainingInline">
+                      Left {formatMoney(b.meta.remainingAmount)}
+                    </div>
+                  ) : null}
                 </td>
 
                 <td>
                   <span className={`statusBadge ${status.tone}`}>
+                    <StatusIcon tone={status.tone} />
                     {status.label}
                   </span>
                 </td>
@@ -186,23 +270,40 @@ export default function BillsTable({
                     <button
                       className="btn small primary iconActionBtn"
                       onClick={() => onMarkPaid(b.id)}
-                      disabled={b.archived}
-                      aria-label="Mark paid"
-                      title="Mark paid"
+                      disabled={b.archived || markPaidLoading}
+                      aria-label={markPaidLoading ? "Marking paid" : "Mark paid"}
+                      title={markPaidLoading ? "Marking..." : "Mark paid"}
+                      aria-busy={markPaidLoading ? "true" : undefined}
                     >
                       <span className="actionIcon" aria-hidden="true">
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M20 6 9 17l-5-5" />
-                        </svg>
+                        {markPaidLoading ? (
+                          <svg
+                            className="btnLoadingSpin"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+                          </svg>
+                        ) : (
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        )}
                       </span>
-                      <span className="actionText">Mark paid</span>
+                      <span className="actionText">
+                        {markPaidLoading ? "Marking..." : "Mark paid"}
+                      </span>
                     </button>
                     <button
                       className="btn small iconActionBtn"
@@ -295,26 +396,23 @@ export default function BillsTable({
 
                   <div className="rowActionsMobile">
                     <button
-                      className="btn small rowMenuTrigger"
-                      aria-label="Open actions"
-                      title="Actions"
+                      className={`btn small rowMenuTrigger ${
+                        openMenuId === b.id ? "open" : ""
+                      }`}
+                      aria-label={openMenuId === b.id ? "Close actions" : "Open actions"}
+                      title={openMenuId === b.id ? "Close actions" : "More options"}
+                      aria-expanded={openMenuId === b.id}
+                      aria-haspopup="menu"
                       onClick={() =>
                         setOpenMenuId((currentId) =>
                           currentId === b.id ? null : b.id
                         )
                       }
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <circle cx="12" cy="5" r="1.5" />
-                        <circle cx="12" cy="12" r="1.5" />
-                        <circle cx="12" cy="19" r="1.5" />
+                      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <circle cx="10" cy="4.5" r="1.6" />
+                        <circle cx="10" cy="10" r="1.6" />
+                        <circle cx="10" cy="15.5" r="1.6" />
                       </svg>
                     </button>
 
@@ -322,25 +420,40 @@ export default function BillsTable({
                       <div className="rowMenu" role="menu" aria-label="Row actions">
                         <button
                           className="btn small rowMenuItem"
-                          aria-label="Mark paid"
-                          title="Mark paid"
-                          disabled={b.archived}
+                          aria-label={markPaidLoading ? "Marking paid" : "Mark paid"}
+                          title={markPaidLoading ? "Marking..." : "Mark paid"}
+                          disabled={b.archived || markPaidLoading}
+                          aria-busy={markPaidLoading ? "true" : undefined}
                           onClick={() => {
                             onMarkPaid(b.id);
                             setOpenMenuId(null);
                           }}
                         >
                           <span className="actionIcon" aria-hidden="true">
-                            <svg
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M20 6 9 17l-5-5" />
-                            </svg>
+                            {markPaidLoading ? (
+                              <svg
+                                className="btnLoadingSpin"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+                              </svg>
+                            ) : (
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
+                            )}
                           </span>
                         </button>
 
@@ -475,4 +588,70 @@ function renderHighlightedText(text, query) {
 function formatCadenceLabel(cadence) {
   const raw = String(cadence || "monthly");
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function formatMobileDate(isoDate) {
+  if (typeof isoDate !== "string") return formatShortDate(isoDate);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!m) return formatShortDate(isoDate);
+  const dt = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return dt.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatMobileDueDelta(daysToDue) {
+  if (daysToDue === 0) return "today";
+  if (daysToDue < 0) return `${Math.abs(daysToDue)}d late`;
+  return `${daysToDue}d`;
+}
+
+function StatusIcon({ tone }) {
+  if (tone === "paid") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M3.5 8.2 6.6 11.2 12.5 5.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (tone === "overdue") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 2.2 2.4 12h11.2L8 2.2Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M8 5.6v3.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="8" cy="10.9" r=".7" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (tone === "dueSoon") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 5.2V8l2 1.3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (tone === "partial") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 8V2.5a5.5 5.5 0 0 1 5.2 5.5H8Z" fill="currentColor" fillOpacity=".4" />
+      </svg>
+    );
+  }
+  if (tone === "archived") {
+    return (
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect x="2.3" y="3" width="11.4" height="2.6" rx=".8" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M3 5.8h10l-.8 6.8H3.8L3 5.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 8h3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
 }

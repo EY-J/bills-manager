@@ -24,6 +24,10 @@ export function computeBillMeta(bill) {
     : 3;
   const overdue = daysToDue < 0;
   const dueSoon = daysToDue >= 0 && daysToDue <= reminderDays;
+  const cycleAmount = Math.max(0, Number(bill?.amount || 0));
+  const cyclePaidAmount = Math.max(0, Number(bill?.cyclePaidAmount || 0));
+  const remainingAmount = Math.max(cycleAmount - cyclePaidAmount, 0);
+  const partiallyPaid = cyclePaidAmount > 0 && remainingAmount > 0;
 
   // months pending = ceil of month distance when overdue
   const monthsPending = overdue ? monthDiffCeil(due, today) : 0;
@@ -35,6 +39,10 @@ export function computeBillMeta(bill) {
     reminderDays,
     overdue,
     dueSoon,
+    cycleAmount,
+    cyclePaidAmount,
+    remainingAmount,
+    partiallyPaid,
     monthsPending,
     lastPaid,
     dueDateObj: due,

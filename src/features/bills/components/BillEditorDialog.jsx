@@ -44,21 +44,13 @@ function normalizeDraftForCompare(draft) {
   };
 }
 
-export default function BillEditorDialog({ open, onClose, bill, onSave }) {
+export default function BillEditorDialog({ onClose, bill, onSave }) {
   // Hooks must always run
   const initialDraft = useMemo(() => buildInitialDraft(bill), [bill]);
   const [draft, setDraft] = useState(initialDraft);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const saveTimerRef = useRef(null);
-
-  // Reset form each time dialog opens (especially for "Add bill")
-  useEffect(() => {
-    if (!open) return;
-    setDraft(buildInitialDraft(bill));
-    setDiscardConfirmOpen(false);
-    setIsSaving(false);
-  }, [open, bill]);
 
   useEffect(() => {
     return () => {
@@ -67,7 +59,6 @@ export default function BillEditorDialog({ open, onClose, bill, onSave }) {
   }, []);
 
   useEffect(() => {
-    if (!open) return;
     function onKeyDown(event) {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -81,7 +72,7 @@ export default function BillEditorDialog({ open, onClose, bill, onSave }) {
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, discardConfirmOpen, isSaving]);
+  }, [discardConfirmOpen, isSaving, onClose]);
 
   // âœ… Hooks BEFORE any return
   const canSave = useMemo(() => {
@@ -102,9 +93,6 @@ export default function BillEditorDialog({ open, onClose, bill, onSave }) {
     const initial = normalizeDraftForCompare(initialDraft);
     return JSON.stringify(current) !== JSON.stringify(initial);
   }, [draft, initialDraft]);
-
-  // Now it's safe to return conditionally
-  if (!open) return null;
 
   function buildPayloadFromDraft() {
     return {

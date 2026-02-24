@@ -12,5 +12,6 @@
 //   notes: string,
 //   totalMonths: number, // 0 = no installment plan
 //   paidMonths: number,
-//   payments: Array<{ id: string, date: "YYYY-MM-DD", amount: number, note?: string }>
+//   cyclePaidAmount: number, // paid toward current billing cycle
+//   payments: Array<{ id: string, date: "YYYY-MM-DD", amount: number, note?: string, settledCycles?: number }>
 // }

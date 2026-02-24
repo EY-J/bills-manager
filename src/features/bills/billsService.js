@@ -47,6 +47,20 @@ function sanitizeWholeNumber(value) {
   return Math.floor(n);
 }
 
+function sanitizeCyclePaidAmount(value, cycleAmount) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  const amount = Number(cycleAmount);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.max(0, Math.min(n, amount));
+}
+
+function sanitizeSettledCycles(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
 function sanitizeReminderSnooze(value) {
   if (!value || typeof value !== "object") return null;
   if (value.type === "days" && isValidISODate(value.until)) {
@@ -70,11 +84,21 @@ function sortPaymentsDesc(payments) {
 
 function sanitizePaymentShape(payment, fallbackDate) {
   const safeDate = isValidISODate(payment?.date) ? payment.date : fallbackDate;
+  const hasSettledCycles = Number.isFinite(Number(payment?.settledCycles));
+  const fallbackSettledCycles =
+    payment?.autoSeedPaidMonths === true || payment?.note === "Unpaid rollover"
+      ? 0
+      : sanitizeAmount(payment?.amount) > 0
+        ? 1
+        : 0;
   const out = {
     id: isNonEmptyString(payment?.id) ? String(payment.id) : crypto.randomUUID(),
     date: safeDate,
     amount: sanitizeAmount(payment?.amount),
     note: typeof payment?.note === "string" ? payment.note : "",
+    settledCycles: hasSettledCycles
+      ? sanitizeSettledCycles(payment?.settledCycles)
+      : fallbackSettledCycles,
   };
 
   if (payment?.autoSeedPaidMonths === true) {
@@ -86,6 +110,7 @@ function sanitizePaymentShape(payment, fallbackDate) {
 
 function sanitizeBillShape(bill, fallbackDate) {
   const dueDate = isValidISODate(bill?.dueDate) ? bill.dueDate : fallbackDate;
+  const amount = sanitizeAmount(bill?.amount);
   const paymentsRaw = Array.isArray(bill?.payments) ? bill.payments : [];
   const payments = sortPaymentsDesc(
     paymentsRaw.map((p) => sanitizePaymentShape(p, dueDate))
@@ -101,7 +126,7 @@ function sanitizeBillShape(bill, fallbackDate) {
     name: isNonEmptyString(bill?.name) ? bill.name.trim() : "Untitled bill",
     category: isNonEmptyString(bill?.category) ? bill.category.trim() : "Other",
     dueDate,
-    amount: sanitizeAmount(bill?.amount),
+    amount,
     notes: typeof bill?.notes === "string" ? bill.notes : "",
     payments,
     cadence: typeof bill?.cadence === "string" ? bill.cadence : "monthly",
@@ -111,6 +136,7 @@ function sanitizeBillShape(bill, fallbackDate) {
     reminderSnooze: sanitizeReminderSnooze(bill?.reminderSnooze),
     totalMonths,
     paidMonths,
+    cyclePaidAmount: sanitizeCyclePaidAmount(bill?.cyclePaidAmount, amount),
   };
 }
 

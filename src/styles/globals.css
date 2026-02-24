@@ -1,9 +1,9 @@
 :root {
   --bg: #0b0d12;
-  --card: #111522;
+  --card: #121a2b;
   --text: #e7eaf0;
   --muted: #9aa4b2;
-  --border: #232a3a;
+  --border: #34415d;
   --primary: #5b8cff;
   --danger: #ff5b6e;
   --warn: #ffcc66;
@@ -163,7 +163,8 @@ h1,h2,h3 { margin: 0; }
 .mobileMenuPanel,
 .mobileMenuBackdrop,
 .headerRightSpacer,
-.mobileAddBtn {
+.mobileAddBtn,
+.mobileBottomNav {
   display: none;
 }
 
@@ -478,6 +479,7 @@ h1,h2,h3 { margin: 0; }
 }
 
 .billsMiniStat {
+  --mini-accent: #9fb1d1;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.02);
@@ -486,14 +488,19 @@ h1,h2,h3 { margin: 0; }
   gap: 6px;
 }
 
+.billsMiniStat:nth-child(1) { --mini-accent: #8fb8ff; }
+.billsMiniStat:nth-child(2) { --mini-accent: #ff8fa1; }
+.billsMiniStat:nth-child(3) { --mini-accent: #7ed9b0; }
+
 .billsMiniStatLabel {
-  color: var(--muted);
+  color: var(--mini-accent);
   font-size: 12px;
   line-height: 1.2;
+  font-weight: 600;
 }
 
 .billsMiniStatValue {
-  color: var(--text);
+  color: #eaf0ff;
   font-size: 17px;
   line-height: 1.1;
   letter-spacing: -0.01em;
@@ -717,6 +724,10 @@ h1,h2,h3 { margin: 0; }
     display: block;
   }
 
+  .mobileBottomNav {
+    display: grid;
+  }
+
   .mobileMenuPanel.open {
     opacity: 1;
     pointer-events: auto;
@@ -746,6 +757,7 @@ h1,h2,h3 { margin: 0; }
 
   .container {
     padding-top: 22px;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
   }
 
   .billsCard {
@@ -969,7 +981,7 @@ h1,h2,h3 { margin: 0; }
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: #0f1320;
+  background: #10182b;
   color: var(--text);
   outline: none;
 }
@@ -994,7 +1006,7 @@ h1,h2,h3 { margin: 0; }
 }
 
 .select:hover {
-  border-color: #2e3850;
+  border-color: #4b5f86;
 }
 
 .select:focus {
@@ -1011,14 +1023,26 @@ h1,h2,h3 { margin: 0; }
   padding: 9px 11px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: #0f1320;
+  background: #10182b;
   color: var(--text);
   cursor: pointer;
 }
-.btn:hover { border-color: #2e3850; }
+.btn:hover { border-color: #4b5f86; }
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.66;
+  border-color: #2a3550;
+}
+.btn[aria-busy="true"] {
+  cursor: progress;
+}
 .btn.primary { background: var(--primary); border-color: transparent; color: #081022; font-weight: 700; }
 .btn.danger { background: transparent; border-color: rgba(255, 91, 110, 0.4); color: #ffd3d9; }
 .btn.small { padding: 6px 9px; border-radius: 9px; font-size: 12px; }
+
+.btnLoadingSpin {
+  animation: splashSpin 860ms linear infinite;
+}
 
 .tableWrap { overflow-x: auto; max-width: 100%; border-radius: 12px; border: 1px solid var(--border); }
 .billsTableWrap { overflow-y: visible; }
@@ -1053,6 +1077,16 @@ h1,h2,h3 { margin: 0; }
 }
 
 .row:hover { background: rgba(255,255,255,0.03); }
+
+.row:focus-visible {
+  outline: none;
+}
+
+.billsTable tbody .row:focus-visible td {
+  background: rgba(91, 140, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(126, 167, 255, 0.32), inset 0 -1px 0 rgba(126, 167, 255, 0.32);
+}
+
 .billName {
   display: flex;
   gap: 8px;
@@ -1077,6 +1111,10 @@ h1,h2,h3 { margin: 0; }
   justify-content: space-between;
   gap: 8px;
   color: #8698ba;
+}
+
+.billMobileMeta {
+  display: none;
 }
 
 .billExpandHint {
@@ -1138,6 +1176,10 @@ h1,h2,h3 { margin: 0; }
   text-overflow: ellipsis;
 }
 .dueCell { display: flex; gap: 8px; align-items: baseline; }
+.dueMobileText,
+.dueMobileDelta {
+  display: none;
+}
 .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
 .billOverviewActions {
@@ -1218,6 +1260,7 @@ h1,h2,h3 { margin: 0; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 5px;
   min-width: 78px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -1225,6 +1268,13 @@ h1,h2,h3 { margin: 0; }
   font-size: 12px;
   font-weight: 600;
   line-height: 1.2;
+}
+
+.statusBadge svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  flex-shrink: 0;
 }
 
 .statusBadge.upcoming {
@@ -1241,14 +1291,79 @@ h1,h2,h3 { margin: 0; }
 
 .statusBadge.dueSoon {
   color: #ffe8be;
-  border-color: rgba(255, 186, 82, 0.5);
+  border-color: rgba(255, 186, 82, 0.62);
   background: rgba(255, 186, 82, 0.12);
+  border-style: dashed;
 }
 
 .statusBadge.overdue {
   color: #ffd3d9;
   border-color: rgba(255, 91, 110, 0.45);
   background: rgba(255, 91, 110, 0.1);
+}
+
+.statusBadge.archived {
+  color: #d4d8e2;
+  border-color: rgba(140, 150, 168, 0.5);
+  background: rgba(140, 150, 168, 0.11);
+}
+
+.statusBadge.partial {
+  color: #cde4ff;
+  border-color: rgba(91, 140, 255, 0.65);
+  background: rgba(91, 140, 255, 0.12);
+  border-style: dotted;
+}
+
+.remainingInline {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.mobileBottomNav {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  z-index: 56;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(124, 142, 176, 0.35);
+  background: rgba(13, 18, 32, 0.95);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 14px 34px rgba(2, 8, 24, 0.45);
+}
+
+.mobileBottomNavBtn {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: #b8c3d8;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  padding: 4px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mobileBottomNavBtn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.mobileBottomNavBtn.active {
+  color: #e8eeff;
+  border-color: rgba(91, 140, 255, 0.55);
+  background: rgba(91, 140, 255, 0.14);
 }
 
 .banner {
@@ -1403,7 +1518,7 @@ h1,h2,h3 { margin: 0; }
   background: rgba(0,0,0,0.55);
   display: flex; align-items: center; justify-content: center;
   padding: 16px;
-  z-index: 50;
+  z-index: 70;
   animation: modalBackdropIn var(--motion-duration) var(--motion-ease);
 }
 .modal {
@@ -1644,6 +1759,54 @@ h1,h2,h3 { margin: 0; }
   height: 20px;
 }
 
+.settingsInlineSelect {
+  width: 140px;
+  min-height: 30px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: 11px;
+}
+
+.settingsRowNotificationMode {
+  align-items: flex-start;
+}
+
+.settingsRowStack {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.settingsPills {
+  display: inline-flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.settingsPill {
+  flex: 1;
+  min-height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: #c3cee4;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settingsPill.active {
+  color: #e7eeff;
+  border-color: rgba(91, 140, 255, 0.6);
+  background: rgba(91, 140, 255, 0.16);
+}
+
+.settingsInlineHint {
+  font-size: 10px;
+  color: #8f9bb6;
+  line-height: 1.25;
+  margin-top: -2px;
+}
+
 .settingsActions {
   display: grid;
   gap: 8px;
@@ -1652,6 +1815,13 @@ h1,h2,h3 { margin: 0; }
 .settingsActions .headerBtn {
   width: 100%;
   justify-content: center;
+}
+
+.settingsRollbackBtn:disabled {
+  color: #7f8aa2;
+  border-color: rgba(124, 142, 176, 0.2);
+  background: rgba(124, 142, 176, 0.02);
+  cursor: not-allowed;
 }
 
 .settingsImportState {
@@ -1778,12 +1948,33 @@ h1,h2,h3 { margin: 0; }
 
 @media (max-width: 700px) {
   .settingsModal {
-    max-width: 100%;
+    width: min(calc(100vw - 12px), 460px);
+    max-width: calc(100vw - 12px);
+    max-height: calc(100dvh - 12px);
+    display: flex;
+    flex-direction: column;
+    margin: 0 auto;
+  }
+
+  .settingsModal .modalHeader {
+    flex-shrink: 0;
+  }
+
+  .settingsModal .modalHeader h3 {
+    font-size: 15px;
+  }
+
+  .settingsBody {
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+    gap: 9px;
   }
 
   .settingsRow {
-    padding: 9px 10px;
-    gap: 10px;
+    padding: 8px 9px;
+    gap: 9px;
   }
 
   .settingsLabel {
@@ -1801,6 +1992,11 @@ h1,h2,h3 { margin: 0; }
   .settingsRestorePreview {
     grid-template-columns: 1fr;
     gap: 3px;
+  }
+
+  .settingsInlineSelect {
+    width: min(180px, 100%);
+    align-self: flex-start;
   }
 }
 
@@ -2248,6 +2444,32 @@ h1,h2,h3 { margin: 0; }
     line-height: 1.2;
   }
 
+  /* Keep settings notification mode dropdown compact on mobile */
+  .settingsRowNotificationMode {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+  }
+
+  .modal .settingsInlineSelect {
+    width: min(180px, 100%);
+    min-height: 31px;
+    font-size: 10.5px;
+    line-height: 1.15;
+    padding: 4px 32px 4px 10px;
+    border-radius: 9px;
+    background-position:
+      calc(100% - 14px) calc(50% - 1px),
+      calc(100% - 10px) calc(50% - 1px);
+    background-size: 4px 4px, 4px 4px;
+  }
+
+  .settingsModal .settingsInlineSelect:focus,
+  .settingsModal .settingsInlineSelect:focus-visible {
+    box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.2);
+    border-color: rgba(91, 140, 255, 0.58);
+  }
+
   .modal .textarea {
     min-height: 88px;
   }
@@ -2311,6 +2533,27 @@ h1,h2,h3 { margin: 0; }
     min-height: 30px;
     padding: 4px 10px;
     font-size: 11px;
+  }
+}
+
+/* Wider phones: keep notification mode compact, side-by-side */
+@media (min-width: 430px) and (max-width: 700px) {
+  .settingsRowNotificationMode {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .settingsRowNotificationMode .settingsMeta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .settingsRowNotificationMode .settingsInlineSelect,
+  .modal .settingsRowNotificationMode .settingsInlineSelect {
+    width: 170px;
+    flex-shrink: 0;
   }
 }
 
@@ -2445,6 +2688,34 @@ h1,h2,h3 { margin: 0; }
 
 .billsTable th {
   font-size: 11px;
+  color: #90a6cd;
+  font-weight: 700;
+  letter-spacing: 0.022em;
+}
+
+.actionsHeaderCell {
+  text-align: right;
+}
+
+.headerLabelDesktop {
+  display: inline;
+}
+
+.headerLabelMobile {
+  display: none;
+}
+
+.billsTable thead tr {
+  background: linear-gradient(
+    180deg,
+    rgba(24, 34, 56, 0.52) 0%,
+    rgba(18, 27, 44, 0.3) 100%
+  );
+  box-shadow: inset 0 -1px 0 rgba(120, 149, 206, 0.18);
+}
+
+.billsTable thead th {
+  background: transparent;
 }
 
 .billsTable .dueCell {
@@ -2533,16 +2804,37 @@ h1,h2,h3 { margin: 0; }
 }
 
 .rowMenuTrigger {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 10px;
+  border-color: transparent;
+  background: rgba(13, 20, 34, 0.52);
+  color: #a8b8d8;
+  transition:
+    border-color 180ms ease,
+    color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
 }
 
 .rowMenuTrigger svg {
-  width: var(--icon-md);
-  height: var(--icon-md);
+  width: 14px;
+  height: 14px;
   display: block;
+}
+
+.rowMenuTrigger:hover {
+  color: #d8e5ff;
+  border-color: rgba(91, 140, 255, 0.44);
+  background: rgba(28, 42, 70, 0.58);
+}
+
+.rowMenuTrigger.open {
+  color: #e5eeff;
+  border-color: rgba(91, 140, 255, 0.64);
+  background: rgba(91, 140, 255, 0.16);
+  box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.18);
 }
 
 .rowMenu {
@@ -2693,15 +2985,19 @@ h1,h2,h3 { margin: 0; }
 
 /* Final desktop override for actions menu */
 @media (min-width: 701px) {
+  .actionsHeaderCell {
+    text-align: center;
+  }
+
   .rowActionsDesktop {
     display: none !important;
   }
 
   .rowActionsMobile {
     display: flex !important;
-    justify-content: flex-end;
-    width: fit-content;
-    margin-left: auto;
+    justify-content: center;
+    width: 100%;
+    margin-left: 0;
   }
 
   .billsTable th:last-child,
@@ -2709,6 +3005,7 @@ h1,h2,h3 { margin: 0; }
     width: 88px;
     padding-left: 10px;
     padding-right: 10px;
+    text-align: center;
   }
 }
 
@@ -2792,6 +3089,21 @@ h1,h2,h3 { margin: 0; }
 
 /* Final desktop typography + title info alignment */
 @media (min-width: 701px) {
+  :root {
+    --border: #3c4d70;
+  }
+
+  .btn:hover,
+  .select:hover {
+    border-color: #5d76a7;
+  }
+
+  .card {
+    box-shadow:
+      0 10px 24px rgba(3, 8, 22, 0.34),
+      inset 0 0 0 1px rgba(124, 142, 176, 0.06);
+  }
+
   .headerMain {
     display: block;
     min-width: auto;
@@ -2864,10 +3176,46 @@ h1,h2,h3 { margin: 0; }
   }
 }
 
+/* Table density switch (separate from compact mode) */
+.app.density-compact .billsTable th,
+.app.density-compact .billsTable td {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.app.density-compact .billsTable th {
+  font-size: 10px;
+}
+
+.app.density-compact .billsTable td {
+  font-size: 12.5px;
+}
+
+.app.density-compact .statusBadge {
+  min-width: 70px;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.app.density-compact .remainingInline {
+  font-size: 9px;
+}
+
+@media (max-width: 700px) {
+  .app.density-compact .billsTable tbody td {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+
+  .app.density-compact .billsTable td {
+    font-size: 12px;
+  }
+}
+
 /* Compact mode: tighter spacing for smaller phones */
 @media (max-width: 700px) {
   .app.compactMode .container {
-    padding: 14px 8px 12px;
+    padding: 14px 8px calc(90px + env(safe-area-inset-bottom));
   }
 
   .app.compactMode .billsCard {
@@ -2988,5 +3336,330 @@ h1,h2,h3 { margin: 0; }
   .app.compactMode .modalBody .actions .btn {
     min-height: 34px;
     font-size: 11.5px;
+  }
+}
+
+/* Final mobile table fit: remove forced horizontal scrolling */
+@media (max-width: 700px) {
+  .tableWrap.billsTableWrap {
+    overflow-x: hidden;
+  }
+
+  .billsTable,
+  .app.compactMode .billsTable {
+    min-width: 0 !important;
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  .billsTable th:nth-child(2),
+  .billsTable td:nth-child(2),
+  .billsTable th:nth-child(4),
+  .billsTable td:nth-child(4),
+  .billsTable th:nth-child(5),
+  .billsTable td:nth-child(5),
+  .billsTable th:nth-child(6),
+  .billsTable td:nth-child(6) {
+    display: none;
+  }
+
+  .billsTable th,
+  .billsTable td {
+    padding: 10px 7px !important;
+  }
+
+  .billsTable th:first-child,
+  .billsTable td:first-child {
+    width: 58%;
+    min-width: 0;
+    padding-right: 10px !important;
+  }
+
+  .billsTable th:nth-child(3),
+  .billsTable td:nth-child(3) {
+    width: 27%;
+    padding-left: 8px !important;
+  }
+
+  .billsTable th:last-child,
+  .billsTable td:last-child {
+    width: 15%;
+    min-width: 54px;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+
+  .actionsHeaderCell {
+    text-align: center !important;
+    font-size: 0;
+    letter-spacing: 0;
+    color: transparent;
+  }
+
+  .billsTable th {
+    font-size: 10px;
+    letter-spacing: 0.032em;
+    color: #7e95be;
+    white-space: nowrap;
+  }
+
+  .headerLabelDesktop {
+    display: none;
+  }
+
+  .headerLabelMobile {
+    display: inline;
+  }
+
+  .actionsHeaderCell .headerLabelMobile {
+    display: none;
+  }
+
+  .billsTable td {
+    white-space: normal;
+    line-height: 1.2;
+  }
+
+  .billsTable td.right,
+  .billsTable th.right {
+    text-align: left;
+  }
+
+  .billName {
+    white-space: normal;
+    gap: 6px;
+  }
+
+  .billMetaLine {
+    gap: 6px;
+    align-items: center;
+    margin-top: 1px;
+  }
+
+  .billMetaLine > span {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .billExpandHint {
+    display: none;
+  }
+
+  .billExtraLine,
+  .billNote {
+    white-space: normal;
+  }
+
+  .billMobileMeta {
+    display: block;
+    margin-top: 2px;
+    color: #7f91b4;
+    font-size: 10px;
+    line-height: 1.2;
+    display: grid;
+    gap: 2px;
+  }
+
+  .billMobileMetaPrimary {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .billMobileCategory {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #8fa3c8;
+  }
+
+  .billMetaDivider {
+    color: #60749b;
+    flex-shrink: 0;
+  }
+
+  .billMobileAmount {
+    color: #7ed9b0;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .billMobileStatus {
+    flex-shrink: 0;
+    font-weight: 700;
+  }
+
+  .billMobileStatus-overdue {
+    color: #ff8fa1;
+  }
+
+  .billMobileStatus-dueSoon {
+    color: #ffd48a;
+  }
+
+  .billMobileStatus-paid {
+    color: #7ed9b0;
+  }
+
+  .billMobileStatus-upcoming {
+    color: #a9bde2;
+  }
+
+  .billMobileStatus-partial {
+    color: #9ecbff;
+  }
+
+  .billMobileStatus-archived {
+    color: #b6bfd2;
+  }
+
+  .billMobileMetaSecondary {
+    color: #93a5c8;
+    font-size: 9.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dueCell {
+    display: grid;
+    gap: 1px;
+    align-items: start;
+    white-space: normal;
+  }
+
+  .dueDesktopText,
+  .dueDesktopDelta {
+    display: none;
+  }
+
+  .dueMobileText,
+  .dueMobileDelta {
+    display: block;
+    white-space: nowrap;
+  }
+
+  .dueMobileText {
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .dueMobileDelta {
+    font-size: 11px;
+    color: #95a7ca;
+  }
+
+  .statusBadge {
+    min-width: 0;
+    max-width: 100%;
+    width: fit-content;
+    font-size: 10.5px;
+    padding: 2px 6px;
+  }
+
+  .rowActionsMobile {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .rowMenuTrigger {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: #8ea3ca;
+  }
+
+  .rowMenuTrigger:hover {
+    background: rgba(124, 142, 176, 0.09);
+    border-color: transparent;
+  }
+
+  .rowMenuTrigger.open {
+    background: rgba(91, 140, 255, 0.15);
+    border-color: transparent;
+    box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.16);
+    color: #dce8ff;
+  }
+
+  .rowMenu {
+    right: 0;
+    top: calc(100% + 6px);
+    transform: none;
+    transform-origin: top right;
+    flex-direction: row;
+    gap: 5px;
+    padding: 7px;
+    border-radius: 12px;
+    z-index: 35;
+  }
+
+  .rowMenuItem {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+  }
+}
+
+/* Global crash fallback */
+.crashFallback {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.crashCard {
+  width: min(520px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: linear-gradient(
+    180deg,
+    rgba(15, 24, 43, 0.96) 0%,
+    rgba(10, 17, 32, 0.98) 100%
+  );
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.32);
+  padding: 22px;
+  display: grid;
+  gap: 10px;
+}
+
+.crashCard h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.crashCard p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.crashCard .btn {
+  width: fit-content;
+  min-width: 128px;
+}
+
+@media (max-width: 700px) {
+  .crashCard {
+    border-radius: 14px;
+    padding: 16px;
+    gap: 8px;
+  }
+
+  .crashCard h1 {
+    font-size: 22px;
+  }
+
+  .crashCard .btn {
+    width: 100%;
+    min-height: 40px;
   }
 }

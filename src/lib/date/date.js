@@ -5,7 +5,12 @@ export function startOfToday() {
 }
 
 export function toISODate(d) {
-  const dt = typeof d === "string" ? new Date(d) : d;
+  const dt =
+    typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)
+      ? parseISODate(d)
+      : typeof d === "string"
+        ? new Date(d)
+        : d;
   const yyyy = dt.getFullYear();
   const mm = String(dt.getMonth() + 1).padStart(2, "0");
   const dd = String(dt.getDate()).padStart(2, "0");
@@ -51,7 +56,12 @@ export function formatMoney(n) {
 }
 
 export function formatShortDate(isoOrDate) {
-  const dt = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  const dt =
+    typeof isoOrDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(isoOrDate)
+      ? parseISODate(isoOrDate)
+      : typeof isoOrDate === "string"
+        ? new Date(isoOrDate)
+        : isoOrDate;
   return dt.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",

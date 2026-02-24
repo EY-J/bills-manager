@@ -1,11 +1,16 @@
-const CACHE_VERSION = "bills-tracker-v2";
-const SHELL_CACHE = `shell-${CACHE_VERSION}`;
-const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
+const CACHE_PREFIX = "bills-tracker";
+const SW_URL = new URL(self.location.href);
+const SW_VERSION_RAW = SW_URL.searchParams.get("v") || "legacy";
+const SW_VERSION = SW_VERSION_RAW.replace(/[^a-zA-Z0-9_-]/g, "") || "legacy";
+const SHELL_CACHE = `${CACHE_PREFIX}-shell-${SW_VERSION}`;
+const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${SW_VERSION}`;
 
 const APP_SHELL = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
+  "/icon-192.png",
+  "/icon-512.png",
   "/vite.svg",
 ];
 
@@ -21,6 +26,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
+          .filter((key) => key.startsWith(`${CACHE_PREFIX}-`))
           .filter((key) => key !== SHELL_CACHE && key !== RUNTIME_CACHE)
           .map((key) => caches.delete(key))
       )

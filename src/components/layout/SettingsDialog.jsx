@@ -1,12 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 
+function formatMb(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+}
+
 export default function SettingsDialog({
   open,
   onClose,
+  maxRestoreFileBytes = 2 * 1024 * 1024,
   notifyEnabled,
   setNotifyEnabled,
+  notificationMode,
+  setNotificationMode,
   compactMode,
   setCompactMode,
+  tableDensity,
+  setTableDensity,
+  hasRiskRestorePoint,
+  onRollbackRiskRestore,
   canInstall,
   onInstall,
   onBackup,
@@ -41,6 +52,30 @@ export default function SettingsDialog({
   async function handleRestoreFileChange(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (Number(file.size || 0) <= 0) {
+      event.target.value = "";
+      setRestoreState({
+        ok: false,
+        state: "error",
+        title: "Empty file",
+        message: "The selected file is empty.",
+        hint: "Pick a valid backup .json file exported from this app.",
+      });
+      return;
+    }
+
+    if (Number(file.size || 0) > Number(maxRestoreFileBytes || 0)) {
+      event.target.value = "";
+      setRestoreState({
+        ok: false,
+        state: "error",
+        title: "File too large",
+        message: "This backup is too large to safely restore on this device.",
+        hint: `Use a backup up to ${formatMb(maxRestoreFileBytes)}.`,
+      });
+      return;
+    }
 
     setIsRestoring(true);
     setRestoreState(null);
@@ -156,6 +191,22 @@ export default function SettingsDialog({
               </label>
             </div>
 
+            <div className="settingsRow settingsRowNotificationMode">
+              <div className="settingsMeta">
+                <span className="settingsLabel">Notification mode</span>
+                <span className="settingsHint">Daily summary or instant per bill.</span>
+              </div>
+              <select
+                className="select settingsInlineSelect"
+                value={notificationMode === "instant" ? "instant" : "digest"}
+                onChange={(e) => setNotificationMode?.(e.target.value === "instant" ? "instant" : "digest")}
+                aria-label="Notification mode"
+              >
+                <option value="digest">Digest (daily)</option>
+                <option value="instant">Instant (per bill)</option>
+              </select>
+            </div>
+
             <div className="settingsRow">
               <div className="settingsMeta">
                 <span className="settingsLabel">Compact mode</span>
@@ -171,6 +222,29 @@ export default function SettingsDialog({
                   <span className="switchThumb" />
                 </span>
               </label>
+            </div>
+
+            <div className="settingsRow settingsRowStack">
+              <div className="settingsMeta">
+                <span className="settingsLabel">Table density</span>
+                <span className="settingsHint">Controls row spacing independently from compact mode.</span>
+              </div>
+              <div className="settingsPills" role="group" aria-label="Table density">
+                <button
+                  type="button"
+                  className={`settingsPill ${tableDensity !== "compact" ? "active" : ""}`}
+                  onClick={() => setTableDensity?.("comfortable")}
+                >
+                  Comfortable
+                </button>
+                <button
+                  type="button"
+                  className={`settingsPill ${tableDensity === "compact" ? "active" : ""}`}
+                  onClick={() => setTableDensity?.("compact")}
+                >
+                  Compact
+                </button>
+              </div>
             </div>
           </section>
 
@@ -206,6 +280,20 @@ export default function SettingsDialog({
               >
                 {isRestoring ? "Importing..." : "Restore data"}
               </button>
+
+              <button
+                className="btn headerBtn settingsRollbackBtn"
+                disabled={!hasRiskRestorePoint}
+                onClick={() => {
+                  onRollbackRiskRestore?.();
+                  onClose?.();
+                }}
+              >
+                Rollback risky action
+              </button>
+              {!hasRiskRestorePoint ? (
+                <span className="settingsInlineHint">No restore point yet.</span>
+              ) : null}
             </div>
 
             {restoreState ? (
