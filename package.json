@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test \"tests/**/*.test.js\"",
+    "test": "node scripts/run-tests.mjs",
     "preview": "vite preview",
     "test:responsive:install": "playwright install chromium",
     "test:responsive": "node scripts/responsive-check.mjs"
