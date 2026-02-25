@@ -6,18 +6,58 @@ on:
       - main
       - master
   pull_request:
+  deployment_status:
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  security-audit:
+    name: Security Audit (Prod Deps)
+    if: github.event_name != 'deployment_status'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
   quality:
     name: Lint Test Build
+    if: github.event_name != 'deployment_status'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -45,6 +85,7 @@ jobs:
 
   responsive:
     name: Responsive Smoke
+    if: github.event_name != 'deployment_status'
     runs-on: ubuntu-latest
     needs: quality
     timeout-minutes: 20
@@ -72,3 +113,162 @@ jobs:
         env:
           SKIP_BUILD: "1"
         run: npm run test:responsive
+
+  auth-smoke:
+    name: Auth Modal Smoke
+    if: github.event_name != 'deployment_status'
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Auth modal smoke test
+        env:
+          SKIP_BUILD: "1"
+        run: npm run test:e2e:auth
+
+  offline:
+    name: Offline Readiness Smoke
+    if: github.event_name != 'deployment_status'
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Offline readiness smoke test
+        env:
+          SKIP_BUILD: "1"
+          OFFLINE_VIEWPORTS: iphone,desktop
+        run: npm run test:offline
+
+  sw-upgrade:
+    name: Service Worker Upgrade Smoke
+    if: github.event_name != 'deployment_status'
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: SW upgrade smoke test
+        env:
+          SKIP_BUILD: "1"
+        run: npm run test:sw-upgrade
+
+  preview-smoke:
+    name: Preview URL Smoke
+    if: >
+      github.event_name == 'deployment_status' &&
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout deployment commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Preview responsive smoke test
+        env:
+          RESPONSIVE_BASE_URL: ${{ github.event.deployment_status.environment_url }}
+          RESPONSIVE_VIEWPORTS: iphone,pixel,desktop
+        run: npm run test:responsive
+
+  preview-critical-e2e:
+    name: Preview Critical Flow E2E
+    if: >
+      github.event_name == 'deployment_status' &&
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout deployment commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Preview critical flow E2E
+        env:
+          E2E_BASE_URL: ${{ github.event.deployment_status.environment_url }}
+        run: npm run test:e2e:critical

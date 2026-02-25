@@ -1,5 +1,11 @@
-import { useEffect, useState } from "react";
-import { clearBills, loadBills, saveBills } from "../billsService.js";
+import { useEffect, useRef, useState } from "react";
+import {
+  BILLS_STORAGE_KEY,
+  STORAGE_SCHEMA_VERSION,
+  clearBills,
+  loadBills,
+  saveBills,
+} from "../billsService.js";
 import {
   advanceDueDateByCadence,
   BILL_CADENCE_OPTIONS,
@@ -10,15 +16,77 @@ import {
 import { parseISODate, startOfToday, toISODate } from "../../../lib/date/date.js";
 
 export const STORAGE_WARNING_EVENT = "bills:storage-warning";
+export const BILLS_EXTERNAL_SYNC_EVENT = "bills:external-sync";
 export const MAX_UNPAID_ROLLOVER_ENTRIES = 120;
+const NOTIFY_ENABLED_KEY = "bills_notify_enabled";
+const STORAGE_USAGE_SOFT_LIMIT_BYTES = 4 * 1024 * 1024;
+const STORAGE_USAGE_WARNING_COOLDOWN_MS = 60 * 1000;
+const STORAGE_USAGE_WARNING_MESSAGE =
+  "Storage almost full. Backup data to avoid save issues.";
 
-function emitStorageWarning() {
+function emitStorageWarning(message) {
   if (typeof window === "undefined") return;
   try {
-    window.dispatchEvent(new CustomEvent(STORAGE_WARNING_EVENT));
+    window.dispatchEvent(
+      new CustomEvent(STORAGE_WARNING_EVENT, {
+        detail: typeof message === "string" ? { message } : undefined,
+      })
+    );
   } catch {
     // ignore
   }
+}
+
+function emitExternalSync(message) {
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent(BILLS_EXTERNAL_SYNC_EVENT, {
+        detail: typeof message === "string" ? { message } : undefined,
+      })
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function encodeByteLength(value) {
+  const text = String(value ?? "");
+  try {
+    return new TextEncoder().encode(text).length;
+  } catch {
+    return text.length * 2;
+  }
+}
+
+function estimateBillsStorageBytes(bills) {
+  const envelope = {
+    schemaVersion: STORAGE_SCHEMA_VERSION,
+    // Stable placeholder length to approximate localStorage footprint.
+    updatedAt: "2000-01-01T00:00:00.000Z",
+    data: { bills: Array.isArray(bills) ? bills : [] },
+  };
+  return encodeByteLength(JSON.stringify(envelope));
+}
+
+function parseNotifyEnabledRaw(raw) {
+  return raw === "true";
+}
+
+function areBillsStateEqual(a, b) {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+function msUntilNextLocalMidnight() {
+  const now = new Date();
+  const next = new Date(now);
+  // Add a small cushion so device clock jitter does not skip the rollover tick.
+  next.setHours(24, 0, 0, 50);
+  return Math.max(next.getTime() - now.getTime(), 1000);
 }
 
 function monthIndex(d) {
@@ -428,16 +496,46 @@ export function useBills() {
 
   const [notifyEnabled, setNotifyEnabled] = useState(() => {
     try {
-      const raw = localStorage.getItem("bills_notify_enabled");
-      return raw === "true";
+      const raw = localStorage.getItem(NOTIFY_ENABLED_KEY);
+      return parseNotifyEnabledRaw(raw);
     } catch {
       return false;
     }
   });
+  const skipNextBillsPersistRef = useRef(false);
+  const skipNextNotifyPersistRef = useRef(false);
+  const lastStorageUsageWarningAtRef = useRef(0);
+  const billsSnapshotRef = useRef(bills);
+  const notifySnapshotRef = useRef(notifyEnabled);
+
+  useEffect(() => {
+    billsSnapshotRef.current = bills;
+  }, [bills]);
+
+  useEffect(() => {
+    notifySnapshotRef.current = notifyEnabled;
+  }, [notifyEnabled]);
+
   // Persist bills on changes.
   useEffect(() => {
+    if (skipNextBillsPersistRef.current) {
+      skipNextBillsPersistRef.current = false;
+      return;
+    }
+
     try {
       saveBills(bills);
+      const estimatedBytes = estimateBillsStorageBytes(bills);
+      if (estimatedBytes >= STORAGE_USAGE_SOFT_LIMIT_BYTES) {
+        const now = Date.now();
+        if (
+          now - lastStorageUsageWarningAtRef.current >=
+          STORAGE_USAGE_WARNING_COOLDOWN_MS
+        ) {
+          lastStorageUsageWarningAtRef.current = now;
+          emitStorageWarning(STORAGE_USAGE_WARNING_MESSAGE);
+        }
+      }
     } catch {
       emitStorageWarning();
     }
@@ -445,12 +543,93 @@ export function useBills() {
 
   // Persist notification toggle.
   useEffect(() => {
+    if (skipNextNotifyPersistRef.current) {
+      skipNextNotifyPersistRef.current = false;
+      return;
+    }
+
     try {
-      localStorage.setItem("bills_notify_enabled", String(notifyEnabled));
+      localStorage.setItem(NOTIFY_ENABLED_KEY, String(notifyEnabled));
     } catch {
       emitStorageWarning();
     }
   }, [notifyEnabled]);
+
+  useEffect(() => {
+    function onStorage(event) {
+      if (event.storageArea !== localStorage) return;
+
+      if (event.key === null || event.key === BILLS_STORAGE_KEY) {
+        try {
+          const nextBills = hydrateRecurringBills(loadBills());
+          if (!areBillsStateEqual(billsSnapshotRef.current, nextBills)) {
+            skipNextBillsPersistRef.current = true;
+            setBills(nextBills);
+            emitExternalSync("Bills updated in another tab.");
+          }
+        } catch {
+          emitStorageWarning();
+        }
+      }
+
+      if (event.key === null || event.key === NOTIFY_ENABLED_KEY) {
+        try {
+          const nextNotifyEnabled = parseNotifyEnabledRaw(event.newValue);
+          if (notifySnapshotRef.current !== nextNotifyEnabled) {
+            skipNextNotifyPersistRef.current = true;
+            setNotifyEnabled(nextNotifyEnabled);
+            emitExternalSync("Notification preference changed in another tab.");
+          }
+        } catch {
+          emitStorageWarning();
+        }
+      }
+    }
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return undefined;
+    }
+
+    const rollIfNeeded = () => {
+      setBills((prev) => {
+        const next = hydrateRecurringBills(prev);
+        return areBillsStateEqual(prev, next) ? prev : next;
+      });
+    };
+
+    let midnightTimerId = 0;
+    const scheduleNextMidnightRoll = () => {
+      midnightTimerId = window.setTimeout(() => {
+        rollIfNeeded();
+        scheduleNextMidnightRoll();
+      }, msUntilNextLocalMidnight());
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        rollIfNeeded();
+      }
+    };
+
+    const onFocus = () => {
+      rollIfNeeded();
+    };
+
+    scheduleNextMidnightRoll();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.clearTimeout(midnightTimerId);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   function addBill(data) {
     const plan = normalizePlan(data.totalMonths, data.paidMonths);

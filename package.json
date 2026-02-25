@@ -10,7 +10,11 @@
     "test": "node scripts/run-tests.mjs",
     "preview": "vite preview",
     "test:responsive:install": "playwright install chromium",
-    "test:responsive": "node scripts/responsive-check.mjs"
+    "test:responsive": "node scripts/responsive-check.mjs",
+    "test:e2e:auth": "node scripts/auth-modal-smoke.mjs",
+    "test:offline": "node scripts/offline-smoke.mjs",
+    "test:e2e:critical": "node scripts/deployed-critical-check.mjs",
+    "test:sw-upgrade": "node scripts/sw-upgrade-smoke.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.34.2",

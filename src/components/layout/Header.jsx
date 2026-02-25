@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function Header({ onAdd, onOpenSettings }) {
+export default function Header({ onAdd, onOpenSettings, onOpenAccount, accountSignedIn }) {
   return (
     <div className="header">
       <div className="headerInner">
@@ -51,6 +51,27 @@ export default function Header({ onAdd, onOpenSettings }) {
         </button>
 
         <div className="headerActions">
+          <button
+            type="button"
+            className={`btn headerBtn desktopActionsBtn settingsIconBtn accountIconBtn ${
+              accountSignedIn ? "isSignedIn" : ""
+            }`}
+            aria-label={accountSignedIn ? "Open account (signed in)" : "Open account"}
+            onClick={onOpenAccount}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="8" r="3.25" />
+              <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
+            </svg>
+          </button>
           <button
             type="button"
             className="btn headerBtn desktopActionsBtn settingsIconBtn"

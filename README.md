@@ -1,34 +1,152 @@
-# React + Vite
+# Pocket Ledger (Bills Manager)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Pocket Ledger is an offline-first bills tracker built with React + Vite.
+It is optimized for mobile app-like use, while still working well on desktop.
 
-Currently, two official plugins are available:
+## Core features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Track bills with recurring cadence:
+  - monthly
+  - bi-weekly
+  - weekly
+- Mark bills as paid and auto-advance due dates by cadence.
+- Add/edit/delete payment history entries.
+- Dynamic status states (Paid, Upcoming, Overdue, Due soon window).
+- Backup and restore data (JSON) with integrity validation.
+- Undo support for important actions.
+- Settings for notification mode, compact mode, and table density.
+- Optional account login (email/password) with email-code verification and auto-sync across devices.
+- Installable as a PWA on supported mobile browsers.
 
-## React Compiler
+## Tech stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19
+- Vite 7
+- Playwright (responsive smoke testing)
+- Vercel (deployment target)
 
-## Expanding the ESLint configuration
+## Local development
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+1. Install dependencies:
+   `npm install`
+2. Start dev server:
+   `npm run dev`
+3. Open the URL shown in terminal.
 
-## Responsive Test Tutorial
+## Environment variables
 
-Use this before deploy to verify mobile/tablet/desktop layout fit.
+Use `.env.example` as reference.
 
-1. Install Chromium for Playwright (one-time):
+- `VITE_APP_VERSION`
+  - Example: `1.0.0`
+  - Shown in Settings for support/debug identification.
+- `VITE_ERROR_REPORT_ENDPOINT` (optional)
+  - Recommended on Vercel: `/api/runtime-errors`
+  - If empty, runtime errors are stored locally only.
+- `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+  - Required in Vercel production for account sync storage.
+- `AUTH_SESSION_SECRET`
+  - Required in Vercel production for secure login session cookies.
+- `RESEND_API_KEY` and `ACCOUNT_EMAIL_FROM`
+  - Required in Vercel production for email verification code delivery.
+- `AUTH_VERIFICATION_SECRET` (optional)
+  - Separate hashing secret for signup verification codes.
+
+## Runtime monitoring
+
+The app captures:
+- uncaught runtime errors
+- unhandled promise rejections
+- React error boundary crashes
+
+Behavior:
+- Stores recent errors locally (`bills_runtime_errors_v1`)
+- Optionally posts errors to `VITE_ERROR_REPORT_ENDPOINT`
+
+Included serverless endpoint:
+- `api/runtime-errors.js` (Vercel function)
+- Works with strict CSP `connect-src 'self'`
+
+## Data storage and privacy
+
+- App data is stored locally in browser/device storage by default.
+- If user signs in, bills are synced to remote storage using account session cookies.
+- Backup/Restore still works for manual portability.
+
+## Testing and quality checks
+
+Run before deployment:
+
+- Lint:
+  `npm run lint`
+- Unit tests:
+  `npm run test`
+- Production build:
+  `npm run build`
+
+Responsive smoke test:
+
+1. Install Playwright browser once:
    `npm run test:responsive:install`
-2. Run responsive smoke test:
+2. Run responsive checks:
    `npm run test:responsive`
 3. Faster rerun (skip build):
-   Windows PowerShell: `$env:SKIP_BUILD='1'; npm run test:responsive`
-   macOS/Linux: `SKIP_BUILD=1 npm run test:responsive`
+   - Windows PowerShell: `$env:SKIP_BUILD='1'; npm run test:responsive`
+   - macOS/Linux: `SKIP_BUILD=1 npm run test:responsive`
 
-The script checks:
+The responsive suite checks:
 - no horizontal overflow
-- settings modal width fit
-- bill details modal width fit
-- bill editor modal width fit
+- modal width fit (settings/details/editor)
+- settings toggles
+- key flows (mark paid, add payment, edit, undo)
+
+Critical flow E2E (deployed/local):
+
+- Run locally against preview:
+  `npm run test:e2e:critical`
+- Run against deployed URL:
+  - Windows PowerShell: `$env:E2E_BASE_URL='https://your-preview-url.vercel.app'; npm run test:e2e:critical`
+  - macOS/Linux: `E2E_BASE_URL=https://your-preview-url.vercel.app npm run test:e2e:critical`
+
+Critical flow checks include:
+- create bill
+- mark paid
+- edit payment
+- backup + restore
+- clear all + undo
+
+## Deploy to Vercel
+
+1. Import this repo into Vercel.
+2. Set environment variables in:
+   `Project -> Settings -> Environment Variables`
+   - `VITE_APP_VERSION`
+   - `VITE_ERROR_REPORT_ENDPOINT` (optional, recommended: `/api/runtime-errors`)
+   - `KV_REST_API_URL`
+   - `KV_REST_API_TOKEN`
+   - `AUTH_SESSION_SECRET`
+   - `RESEND_API_KEY`
+   - `ACCOUNT_EMAIL_FROM`
+3. Deploy.
+
+Security headers are configured in `vercel.json`, including:
+- CSP
+- HSTS
+- X-Frame-Options
+- X-Content-Type-Options
+- COOP/CORP
+
+If you use an external monitoring endpoint (not `/api/runtime-errors`):
+- add that domain to CSP `connect-src` in `vercel.json`
+
+## Mobile validation checklist
+
+Before releasing:
+
+1. Install app:
+   - Android Chrome: menu -> Install app
+   - iPhone Safari: Share -> Add to Home Screen
+2. Add one test bill and one payment.
+3. Close/reopen app and verify data persists.
+4. Turn on airplane mode and reopen app; verify data still loads.
+5. Run Backup data, then Restore data, and verify records match.

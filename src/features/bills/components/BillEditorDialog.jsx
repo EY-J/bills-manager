@@ -152,8 +152,10 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               and advances to next month.
             </p>
           </div>
-          <button className="iconBtn" disabled={isSaving} onClick={handleRequestClose}>
-            X
+          <button className="iconBtn" disabled={isSaving} onClick={handleRequestClose} aria-label="Close editor">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
           </button>
         </div>
 

@@ -9,6 +9,8 @@
  *    npm run test:responsive
  * 3) Faster rerun using existing dist build:
  *    SKIP_BUILD=1 npm run test:responsive
+ * 4) Run against deployed preview URL (CI/deploy smoke):
+ *    RESPONSIVE_BASE_URL=https://your-preview-url.vercel.app npm run test:responsive
  *
  * What this checks on each viewport:
  * - No page-level horizontal overflow
@@ -22,6 +24,7 @@
 
 import assert from "node:assert/strict";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -29,10 +32,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
 
 const HOST = "127.0.0.1";
-const NPM_CMD = "npm";
+const NPM_EXEC_PATH = String(process.env.npm_execpath || "").trim();
+const NPM_FALLBACK_CMD = process.platform === "win32" ? "npm.cmd" : "npm";
 const SPAWN_OPTIONS = {
   stdio: "inherit",
-  shell: process.platform === "win32",
+  shell: false,
 };
 
 const VIEWPORTS = [
@@ -133,21 +137,48 @@ function runCommand(command, args, label) {
 }
 
 function startPreviewServer(port) {
+  const args = [
+    "run",
+    "preview",
+    "--",
+    "--host",
+    HOST,
+    "--port",
+    String(port),
+    "--strictPort",
+  ];
+  const { command, argv } = resolveNpmInvocation(args);
   const child = spawn(
-    NPM_CMD,
-    [
-      "run",
-      "preview",
-      "--",
-      "--host",
-      HOST,
-      "--port",
-      String(port),
-      "--strictPort",
-    ],
+    command,
+    argv,
     SPAWN_OPTIONS
   );
   return child;
+}
+
+function runNpm(args, label) {
+  const { command, argv } = resolveNpmInvocation(args);
+  return runCommand(command, argv, label);
+}
+
+function resolveNpmInvocation(args) {
+  if (NPM_EXEC_PATH) {
+    return { command: process.execPath, argv: [NPM_EXEC_PATH, ...args] };
+  }
+  return { command: NPM_FALLBACK_CMD, argv: args };
+}
+
+function normalizeBaseUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || "").trim());
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("Preview URL must use http or https.");
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid RESPONSIVE_BASE_URL: ${msg}`);
+  }
 }
 
 async function findFreePort(host = HOST) {
@@ -174,10 +205,12 @@ async function findFreePort(host = HOST) {
 }
 
 async function waitForServer(url, timeoutMs = 45_000) {
+  const parsed = new URL(url);
+  const client = parsed.protocol === "https:" ? https : http;
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const ok = await new Promise((resolve) => {
-      const req = http.get(url, (res) => {
+      const req = client.get(url, (res) => {
         res.resume();
         resolve(Boolean(res.statusCode && res.statusCode < 500));
       });
@@ -187,6 +220,31 @@ async function waitForServer(url, timeoutMs = 45_000) {
     await sleep(500);
   }
   throw new Error(`Preview server did not start within ${timeoutMs}ms`);
+}
+
+async function stopPreviewProcess(preview) {
+  if (!preview || preview.killed) return;
+
+  if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const killer = spawn(
+        "taskkill",
+        ["/pid", String(preview.pid), "/t", "/f"],
+        { stdio: "ignore", shell: false }
+      );
+      killer.on("error", () => resolve());
+      killer.on("exit", () => resolve());
+    });
+    return;
+  }
+
+  preview.kill("SIGTERM");
+  const started = Date.now();
+  while (Date.now() - started < 2_000) {
+    if (preview.exitCode != null) return;
+    await sleep(100);
+  }
+  if (preview.exitCode == null) preview.kill("SIGKILL");
 }
 
 async function seedData(page) {
@@ -549,39 +607,45 @@ async function runViewportCheck(browser, viewport, baseUrl) {
 }
 
 async function main() {
-  if (!process.env.SKIP_BUILD) {
-    await runCommand(NPM_CMD, ["run", "build"], "Build");
-  }
-
+  const externalBaseUrlRaw = String(process.env.RESPONSIVE_BASE_URL || "").trim();
   const targetViewports = selectViewports();
-  const port = await findFreePort(HOST);
-  const baseUrl = `http://${HOST}:${port}`;
   const resultsFile = String(process.env.RESPONSIVE_RESULTS_FILE || "").trim();
+  const isExternalRun = externalBaseUrlRaw.length > 0;
+  const baseUrl = isExternalRun
+    ? normalizeBaseUrl(externalBaseUrlRaw)
+    : `http://${HOST}:${await findFreePort(HOST)}`;
 
-  const preview = startPreviewServer(port);
+  let preview = null;
   let browser = null;
   const results = [];
 
-  const stopPreview = () => {
-    if (!preview || preview.killed) return;
-    preview.kill("SIGTERM");
+  const stopPreview = async () => {
+    await stopPreviewProcess(preview);
   };
 
   process.on("SIGINT", () => {
-    stopPreview();
-    process.exit(130);
+    void stopPreview().finally(() => process.exit(130));
   });
   process.on("SIGTERM", () => {
-    stopPreview();
-    process.exit(143);
+    void stopPreview().finally(() => process.exit(143));
   });
 
   try {
+    if (!isExternalRun) {
+      if (!process.env.SKIP_BUILD) {
+        await runNpm(["run", "build"], "Build");
+      }
+      const port = new URL(baseUrl).port;
+      preview = startPreviewServer(Number(port));
+    }
+
     await waitForServer(baseUrl);
     browser = await chromium.launch({ headless: true });
 
     console.log(
-      `Running responsive checks on ${targetViewports.length} viewport(s)${
+      `Running responsive checks on ${targetViewports.length} viewport(s) [${
+        isExternalRun ? "external preview" : "local preview"
+      }]${
         process.env.RESPONSIVE_VIEWPORTS ? ` [${process.env.RESPONSIVE_VIEWPORTS}]` : ""
       }...`
     );
@@ -626,7 +690,7 @@ async function main() {
     }
 
     if (browser) await browser.close();
-    stopPreview();
+    await stopPreview();
   }
 }
 

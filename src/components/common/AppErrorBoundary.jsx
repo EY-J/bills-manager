@@ -1,4 +1,5 @@
 import React from "react";
+import { captureRuntimeError } from "../../lib/monitoring/runtimeMonitor.js";
 
 export default class AppErrorBoundary extends React.Component {
   constructor(props) {
@@ -11,6 +12,10 @@ export default class AppErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
+    captureRuntimeError(error, {
+      source: "react.error-boundary",
+      componentStack: errorInfo?.componentStack || null,
+    });
     console.error("App crashed in error boundary:", error, errorInfo);
   }
 
@@ -38,4 +43,3 @@ export default class AppErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
-

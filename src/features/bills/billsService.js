@@ -1,8 +1,8 @@
 import { storage } from "../../lib/storage/storage.js";
 
-const KEY = "bills_manager_v1";
-const STORAGE_SCHEMA_VERSION = 2;
-const BACKUP_SCHEMA_VERSION = 2;
+export const BILLS_STORAGE_KEY = "bills_manager_v1";
+export const STORAGE_SCHEMA_VERSION = 2;
+export const BACKUP_SCHEMA_VERSION = 2;
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -146,6 +146,100 @@ function sanitizeBillsShape(rawBills) {
   return rawBills.map((bill) => sanitizeBillShape(bill, todayIso));
 }
 
+function areBillsEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function normalizeRestoreMode(mode) {
+  return mode === "merge" ? "merge" : "replace";
+}
+
+function normalizeConflictPolicy(policy) {
+  return policy === "skip" ? "skip" : "overwrite";
+}
+
+export function buildRestorePlan({
+  currentBills,
+  incomingBills,
+  mode = "replace",
+  conflictPolicy = "overwrite",
+}) {
+  const normalizedMode = normalizeRestoreMode(mode);
+  const normalizedPolicy = normalizeConflictPolicy(conflictPolicy);
+  const current = sanitizeBillsShape(Array.isArray(currentBills) ? currentBills : []);
+  const incoming = sanitizeBillsShape(Array.isArray(incomingBills) ? incomingBills : []);
+  const currentById = new Map(current.map((bill) => [String(bill.id), bill]));
+  const incomingById = new Map(incoming.map((bill) => [String(bill.id), bill]));
+
+  let added = 0;
+  let updated = 0;
+  let deleted = 0;
+  let conflicts = 0;
+  let skipped = 0;
+  let unchanged = 0;
+  let nextBills = [];
+
+  if (normalizedMode === "replace") {
+    nextBills = Array.from(incomingById.values());
+    incomingById.forEach((nextBill, id) => {
+      const currentBill = currentById.get(id);
+      if (!currentBill) {
+        added += 1;
+        return;
+      }
+      if (areBillsEqual(currentBill, nextBill)) {
+        unchanged += 1;
+        return;
+      }
+      conflicts += 1;
+      updated += 1;
+    });
+    currentById.forEach((_, id) => {
+      if (!incomingById.has(id)) deleted += 1;
+    });
+  } else {
+    const mergedById = new Map(currentById);
+    incomingById.forEach((nextBill, id) => {
+      const currentBill = mergedById.get(id);
+      if (!currentBill) {
+        mergedById.set(id, nextBill);
+        added += 1;
+        return;
+      }
+
+      if (areBillsEqual(currentBill, nextBill)) {
+        unchanged += 1;
+        return;
+      }
+
+      conflicts += 1;
+      if (normalizedPolicy === "overwrite") {
+        mergedById.set(id, nextBill);
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
+    });
+    nextBills = Array.from(mergedById.values());
+  }
+
+  return {
+    bills: nextBills,
+    preview: {
+      mode: normalizedMode,
+      conflictPolicy: normalizedPolicy,
+      incoming: incomingById.size,
+      current: currentById.size,
+      added,
+      updated,
+      deleted,
+      conflicts,
+      skipped,
+      unchanged,
+    },
+  };
+}
+
 function toStorageEnvelope(bills) {
   return {
     schemaVersion: STORAGE_SCHEMA_VERSION,
@@ -196,7 +290,7 @@ function parseStoredBills(raw) {
 }
 
 export function loadBills() {
-  const raw = storage.get(KEY);
+  const raw = storage.get(BILLS_STORAGE_KEY);
   const parsed = parseStoredBills(raw);
 
   if (!parsed.supported) {
@@ -213,7 +307,7 @@ export function loadBills() {
   const changedByHealthCheck = parsedString !== repairedString;
 
   if (parsed.needsWriteBack || changedByHealthCheck) {
-    storage.set(KEY, toStorageEnvelope(repairedBills));
+    storage.set(BILLS_STORAGE_KEY, toStorageEnvelope(repairedBills));
   }
 
   return repairedBills;
@@ -221,11 +315,11 @@ export function loadBills() {
 
 export function saveBills(bills) {
   const repairedBills = sanitizeBillsShape(bills);
-  storage.set(KEY, toStorageEnvelope(repairedBills));
+  storage.set(BILLS_STORAGE_KEY, toStorageEnvelope(repairedBills));
 }
 
 export function clearBills() {
-  storage.remove(KEY);
+  storage.remove(BILLS_STORAGE_KEY);
 }
 
 function checksumFromString(value) {

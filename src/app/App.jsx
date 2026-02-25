@@ -1,28 +1,80 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Header from "../components/layout/Header.jsx";
 import MobileBottomNav from "../components/layout/MobileBottomNav.jsx";
-import SettingsDialog from "../components/layout/SettingsDialog.jsx";
 import DueSoonBanner from "../features/bills/components/DueSoonBanner.jsx";
 import BillsTable from "../features/bills/components/BillsTable.jsx";
-import BillEditorDialog from "../features/bills/components/BillEditorDialog.jsx";
-import BillDetailsDialog from "../features/bills/components/BillDetailsDialog.jsx";
 import EmptyState from "../components/common/EmptyState.jsx";
 import { formatMoney, parseISODate, startOfToday, toISODate } from "../lib/date/date.js";
 import {
+  buildRestorePlan,
   createBackupPayload,
   validateBackupPayload,
 } from "../features/bills/billsService.js";
+import {
+  completePasswordReset,
+  createAccount,
+  getAccountSession,
+  loginAccount,
+  logoutAccount,
+  pullAccountBackup,
+  pushAccountBackup,
+  requestPasswordResetCode,
+} from "../lib/account/accountClient.js";
 
 import {
+  BILLS_EXTERNAL_SYNC_EVENT,
   STORAGE_WARNING_EVENT,
   useBills,
 } from "../features/bills/hooks/useBills.js";
 import { computeBillMeta } from "../features/bills/billsUtils.js";
 import { useDueSoonNotifications } from "../features/bills/hooks/useDueSoonNotifications.js";
 
+const SettingsDialog = lazy(() => import("../components/layout/SettingsDialog.jsx"));
+const AccountDialog = lazy(() => import("../components/layout/AccountDialog.jsx"));
+const BillEditorDialog = lazy(() => import("../features/bills/components/BillEditorDialog.jsx"));
+const BillDetailsDialog = lazy(() => import("../features/bills/components/BillDetailsDialog.jsx"));
+
 const MAX_RESTORE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB guard against UI freeze on huge imports.
 const STORAGE_WARNING_MESSAGE = "Storage unavailable. Changes may not persist.";
+const EXTERNAL_SYNC_NOTICE_MESSAGE = "Updated from another tab.";
 const MAX_UNDO_QUEUE = 8;
+const LAST_BACKUP_AT_KEY = "bills_last_backup_at";
+const LAST_ACCOUNT_SYNC_AT_KEY = "bills_last_account_sync_at";
+const ACCOUNT_AUTO_SYNC_KEY = "bills_account_auto_sync";
+
+function parseRetrySecondsFromMessage(message) {
+  const value = String(message || "");
+  const match = value.match(/(\d+)\s*s\b/i);
+  if (!match) return 0;
+  const seconds = Number(match[1]);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return Math.max(1, Math.ceil(seconds));
+}
+
+function isErrorNoticeMessage(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("no account found") ||
+    text.includes("failed") ||
+    text.includes("could not") ||
+    text.includes("invalid") ||
+    text.includes("denied") ||
+    text.includes("error") ||
+    text.includes("unsupported") ||
+    text.includes("not configured") ||
+    text.includes("not supported") ||
+    text.includes("rate limit")
+  );
+}
 
 export default function App() {
   const {
@@ -55,8 +107,11 @@ export default function App() {
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
   const [undoQueue, setUndoQueue] = useState([]);
   const [noticeToast, setNoticeToast] = useState(null);
+  const [updateReady, setUpdateReady] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountResetToken, setAccountResetToken] = useState("");
   const [showSplash, setShowSplash] = useState(true);
   const [splashLeaving, setSplashLeaving] = useState(false);
   const [compactMode, setCompactMode] = useState(() => {
@@ -84,24 +139,80 @@ export default function App() {
       return "digest";
     }
   });
+  const [lastBackupAt, setLastBackupAt] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LAST_BACKUP_AT_KEY);
+      return typeof raw === "string" ? raw : "";
+    } catch {
+      return "";
+    }
+  });
+  const [accountUser, setAccountUser] = useState(null);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountSyncBusy, setAccountSyncBusy] = useState(false);
+  const [accountStorageMode, setAccountStorageMode] = useState("unknown");
+  const [accountAutoSync, setAccountAutoSync] = useState(() => {
+    try {
+      const raw = localStorage.getItem(ACCOUNT_AUTO_SYNC_KEY);
+      if (raw === "false") return false;
+      return true;
+    } catch {
+      return true;
+    }
+  });
+  const [lastAccountSyncAt, setLastAccountSyncAt] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LAST_ACCOUNT_SYNC_AT_KEY);
+      return typeof raw === "string" ? raw : "";
+    } catch {
+      return "";
+    }
+  });
   const [riskRestorePoint, setRiskRestorePoint] = useState(null);
   const [mobileTab, setMobileTab] = useState("bills");
   const [actionLoadingMap, setActionLoadingMap] = useState({});
   const actionLoadingRef = useRef(new Set());
   const storageWarningCooldownRef = useRef(0);
+  const externalSyncCooldownRef = useRef(0);
+  const accountAutoSyncPrimedRef = useRef(false);
+  const accountAutoSyncTimerRef = useRef(0);
+  const accountSkipNextAutoPushRef = useRef(false);
+  const accountSyncBusyRef = useRef(false);
+  const accountSessionInitRef = useRef(false);
   const dueSoonRef = useRef(null);
   const billsRef = useRef(null);
   const statsRef = useRef(null);
-  const hasBlockingModal = settingsOpen || editorOpen || detailsOpen || clearConfirmOpen;
+  const hasBlockingModal =
+    settingsOpen || accountOpen || editorOpen || detailsOpen || clearConfirmOpen;
   const currentUndoToast = undoQueue[0] || null;
   const queuedUndoCount = Math.max(undoQueue.length - 1, 0);
+  const noticeToastIsError = isErrorNoticeMessage(noticeToast);
 
-  const pushStorageWarning = useCallback(() => {
+  const pushStorageWarning = useCallback((message) => {
     const now = Date.now();
     if (now - storageWarningCooldownRef.current < 2500) return;
     storageWarningCooldownRef.current = now;
-    setNoticeToast(STORAGE_WARNING_MESSAGE);
+    setNoticeToast(
+      typeof message === "string" && message.trim()
+        ? message.trim()
+        : STORAGE_WARNING_MESSAGE
+    );
   }, []);
+
+  const pushExternalSyncNotice = useCallback((message) => {
+    const now = Date.now();
+    if (now - externalSyncCooldownRef.current < 1800) return;
+    externalSyncCooldownRef.current = now;
+    setNoticeToast(
+      typeof message === "string" && message.trim()
+        ? message.trim()
+        : EXTERNAL_SYNC_NOTICE_MESSAGE
+    );
+  }, []);
+
+  useEffect(() => {
+    accountSyncBusyRef.current = Boolean(accountSyncBusy);
+  }, [accountSyncBusy]);
 
   const enqueueUndoToast = useCallback((message, onUndo) => {
     setUndoQueue((prev) => [
@@ -197,12 +308,49 @@ export default function App() {
   }, [noticeToast]);
 
   useEffect(() => {
-    function onStorageWarning() {
-      pushStorageWarning();
+    function onUpdateReady() {
+      setUpdateReady(true);
+    }
+    window.addEventListener("app:update-ready", onUpdateReady);
+    return () => window.removeEventListener("app:update-ready", onUpdateReady);
+  }, []);
+
+  useEffect(() => {
+    if (showSplash) return;
+    const firstRunTipKey = "bills_first_run_tip_v1";
+    let shouldShowTip = true;
+
+    try {
+      shouldShowTip = localStorage.getItem(firstRunTipKey) !== "1";
+      if (shouldShowTip) {
+        localStorage.setItem(firstRunTipKey, "1");
+      }
+    } catch {
+      shouldShowTip = true;
+    }
+
+    if (!shouldShowTip) return;
+    const t = setTimeout(() => {
+      setNoticeToast("Tip: Use quick filters and tap a bill row for details.");
+    }, 650);
+    return () => clearTimeout(t);
+  }, [showSplash]);
+
+  useEffect(() => {
+    function onStorageWarning(event) {
+      pushStorageWarning(event?.detail?.message);
     }
     window.addEventListener(STORAGE_WARNING_EVENT, onStorageWarning);
     return () => window.removeEventListener(STORAGE_WARNING_EVENT, onStorageWarning);
   }, [pushStorageWarning]);
+
+  useEffect(() => {
+    function onExternalSync(event) {
+      pushExternalSyncNotice(event?.detail?.message);
+    }
+    window.addEventListener(BILLS_EXTERNAL_SYNC_EVENT, onExternalSync);
+    return () => window.removeEventListener(BILLS_EXTERNAL_SYNC_EVENT, onExternalSync);
+  }, [pushExternalSyncNotice]);
 
   useEffect(() => {
     try {
@@ -227,6 +375,25 @@ export default function App() {
       pushStorageWarning();
     }
   }, [notificationMode, pushStorageWarning]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACCOUNT_AUTO_SYNC_KEY, String(Boolean(accountAutoSync)));
+    } catch {
+      pushStorageWarning();
+    }
+  }, [accountAutoSync, pushStorageWarning]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        LAST_ACCOUNT_SYNC_AT_KEY,
+        String(lastAccountSyncAt || "").trim()
+      );
+    } catch {
+      pushStorageWarning();
+    }
+  }, [lastAccountSyncAt, pushStorageWarning]);
 
   useEffect(() => {
     if (!clearConfirmOpen) return;
@@ -344,6 +511,134 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const token = String(
+        url.searchParams.get("resetToken") ||
+          url.searchParams.get("passwordResetToken") ||
+          ""
+      ).trim();
+      if (!token) return;
+
+      setAccountResetToken(token);
+      setAccountOpen(true);
+      setMobileTab("account");
+
+      url.searchParams.delete("resetToken");
+      url.searchParams.delete("passwordResetToken");
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, "", next || "/");
+      setNoticeToast("Enter your new password.");
+    } catch {
+      // Ignore malformed URL parsing failures.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (accountSessionInitRef.current) return undefined;
+    accountSessionInitRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getAccountSession();
+        if (cancelled) return;
+        if (result?.storageMode) {
+          setAccountStorageMode(result.storageMode);
+        }
+        if (result?.user) {
+          setAccountUser(result.user || null);
+          setAccountSyncBusy(true);
+          try {
+            const remote = await pullAccountBackup();
+            if (cancelled) return;
+            if (remote?.storageMode) {
+              setAccountStorageMode(remote.storageMode);
+            }
+            if (remote?.payload) {
+              const validation = validateBackupPayload(remote.payload);
+              if (validation.ok) {
+                accountSkipNextAutoPushRef.current = true;
+                replaceAllBills(validation.data.bills);
+                setNotifyEnabled(Boolean(validation.data.notifyEnabled));
+                setLastAccountSyncAt(remote?.updatedAt || new Date().toISOString());
+              }
+            } else {
+              const payload = createBackupPayload({ bills, notifyEnabled });
+              const pushed = await pushAccountBackup(payload);
+              if (pushed?.storageMode) {
+                setAccountStorageMode(pushed.storageMode);
+              }
+              setLastAccountSyncAt(pushed?.updatedAt || new Date().toISOString());
+            }
+          } catch {
+            // keep local-first behavior on sync bootstrap failures
+          } finally {
+            if (!cancelled) {
+              setAccountSyncBusy(false);
+            }
+          }
+        }
+      } catch {
+        // Ignore session restore failures and continue offline-first.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bills, notifyEnabled, replaceAllBills, setNotifyEnabled]);
+
+  useEffect(() => {
+    if (!accountUser?.id || !accountAutoSync) {
+      accountAutoSyncPrimedRef.current = false;
+      if (accountAutoSyncTimerRef.current) {
+        clearTimeout(accountAutoSyncTimerRef.current);
+        accountAutoSyncTimerRef.current = 0;
+      }
+      return;
+    }
+
+    if (!accountAutoSyncPrimedRef.current) {
+      accountAutoSyncPrimedRef.current = true;
+      return;
+    }
+
+    if (accountSkipNextAutoPushRef.current) {
+      accountSkipNextAutoPushRef.current = false;
+      return;
+    }
+
+    if (accountAutoSyncTimerRef.current) {
+      clearTimeout(accountAutoSyncTimerRef.current);
+    }
+    accountAutoSyncTimerRef.current = setTimeout(() => {
+      if (accountSyncBusyRef.current) return;
+      setAccountSyncBusy(true);
+      const payload = createBackupPayload({ bills, notifyEnabled });
+      pushAccountBackup(payload)
+        .then((result) => {
+          if (result?.storageMode) {
+            setAccountStorageMode(result.storageMode);
+          }
+          setLastAccountSyncAt(result?.updatedAt || new Date().toISOString());
+        })
+        .catch(() => {
+          // Silent mode: keep local-first without noisy toasts.
+        })
+        .finally(() => {
+          setAccountSyncBusy(false);
+        });
+    }, 1500);
+
+    return () => {
+      if (accountAutoSyncTimerRef.current) {
+        clearTimeout(accountAutoSyncTimerRef.current);
+        accountAutoSyncTimerRef.current = 0;
+      }
+    };
+  }, [bills, notifyEnabled, accountUser?.id, accountAutoSync]);
+
   async function handleInstallApp() {
     if (!installPromptEvent) return;
     installPromptEvent.prompt();
@@ -407,6 +702,274 @@ export default function App() {
     }
   }
 
+  async function handleAccountPush({ silent = false } = {}) {
+    if (!accountUser?.id) return { ok: false, skipped: true };
+    if (accountSyncBusy) return { ok: false, skipped: true };
+
+    setAccountSyncBusy(true);
+    try {
+      const payload = createBackupPayload({ bills, notifyEnabled });
+      const result = await pushAccountBackup(payload);
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+      const syncedAt = result?.updatedAt || new Date().toISOString();
+      setLastAccountSyncAt(syncedAt);
+      if (!silent) {
+        setNoticeToast("Account sync updated.");
+      }
+      return { ok: true };
+    } catch (error) {
+      if (!silent) {
+        setNoticeToast(error instanceof Error ? error.message : "Account sync failed.");
+      }
+      return { ok: false };
+    } finally {
+      setAccountSyncBusy(false);
+    }
+  }
+
+  async function handleAccountPull({ silent = false } = {}) {
+    if (!accountUser?.id) return { ok: false, skipped: true };
+    if (accountSyncBusy) return { ok: false, skipped: true };
+
+    setAccountSyncBusy(true);
+    try {
+      const result = await pullAccountBackup();
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+      if (!result?.payload) {
+        return { ok: true, empty: true };
+      }
+
+      const validation = validateBackupPayload(result.payload);
+      if (!validation.ok) {
+        if (!silent) {
+          setNoticeToast(validation.reason || "Cloud account data is invalid.");
+        }
+        return { ok: false };
+      }
+
+      const beforeBills = snapshotBills();
+      const beforeNotifyEnabled = notifyEnabled;
+      accountSkipNextAutoPushRef.current = true;
+      replaceAllBills(validation.data.bills);
+      setNotifyEnabled(Boolean(validation.data.notifyEnabled));
+      enqueueUndoToast("Account data restored", () => {
+        replaceAllBills(beforeBills);
+        setNotifyEnabled(beforeNotifyEnabled);
+      });
+
+      const syncedAt = result?.updatedAt || new Date().toISOString();
+      setLastAccountSyncAt(syncedAt);
+      if (!silent) {
+        setNoticeToast("Account data synced.");
+      }
+      return { ok: true };
+    } catch (error) {
+      if (!silent) {
+        setNoticeToast(error instanceof Error ? error.message : "Account pull failed.");
+      }
+      return { ok: false };
+    } finally {
+      setAccountSyncBusy(false);
+    }
+  }
+
+  async function bootstrapAccountAfterSignIn({ silent = false } = {}) {
+    setAccountSyncBusy(true);
+    try {
+      const remote = await pullAccountBackup();
+      if (remote?.storageMode) {
+        setAccountStorageMode(remote.storageMode);
+      }
+      if (remote?.payload) {
+        const validation = validateBackupPayload(remote.payload);
+        if (validation.ok) {
+          const beforeBills = snapshotBills();
+          const beforeNotifyEnabled = notifyEnabled;
+          accountSkipNextAutoPushRef.current = true;
+          replaceAllBills(validation.data.bills);
+          setNotifyEnabled(Boolean(validation.data.notifyEnabled));
+          enqueueUndoToast("Account data restored", () => {
+            replaceAllBills(beforeBills);
+            setNotifyEnabled(beforeNotifyEnabled);
+          });
+          setLastAccountSyncAt(remote?.updatedAt || new Date().toISOString());
+          return { ok: true, restored: true };
+        }
+      }
+
+      const payload = createBackupPayload({ bills, notifyEnabled });
+      const pushed = await pushAccountBackup(payload);
+      if (pushed?.storageMode) {
+        setAccountStorageMode(pushed.storageMode);
+      }
+      setLastAccountSyncAt(pushed?.updatedAt || new Date().toISOString());
+      return { ok: true, restored: false };
+    } catch (error) {
+      if (!silent) {
+        setNoticeToast(error instanceof Error ? error.message : "Account sync failed.");
+      }
+      return { ok: false };
+    } finally {
+      setAccountSyncBusy(false);
+    }
+  }
+
+  async function handleAccountLoginSubmit({ email, password }) {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const cleanPassword = String(password || "");
+    if (!cleanEmail || !cleanPassword) {
+      setNoticeToast("Enter email and password.");
+      return { ok: false };
+    }
+    if (accountBusy) return { ok: false };
+
+    setAccountBusy(true);
+    try {
+      const result = await loginAccount({
+        email: cleanEmail,
+        password: cleanPassword,
+      });
+
+      setAccountUser(result?.user || null);
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+
+      await bootstrapAccountAfterSignIn({ silent: true });
+      setNoticeToast("Signed in.");
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Sign in failed.";
+      setNoticeToast(message);
+
+      const lower = String(message || "").toLowerCase();
+      if (lower.includes("too many") || lower.includes("rate limit")) {
+        return {
+          ok: false,
+          reason: "rate-limited",
+          retryAfterSeconds: parseRetrySecondsFromMessage(message),
+        };
+      }
+      if (lower.includes("invalid email or password")) {
+        return { ok: false, reason: "invalid-credentials" };
+      }
+      return { ok: false };
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function handleAccountSignupCreate({ email, password }) {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const cleanPassword = String(password || "");
+    if (!cleanEmail || !cleanPassword) {
+      setNoticeToast("Enter email and password.");
+      return { ok: false };
+    }
+    if (accountBusy) return { ok: false };
+
+    setAccountBusy(true);
+    try {
+      const result = await createAccount({
+        email: cleanEmail,
+        password: cleanPassword,
+      });
+
+      setAccountUser(result?.user || null);
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+      await bootstrapAccountAfterSignIn({ silent: true });
+      setNoticeToast("Account created.");
+      return { ok: true };
+    } catch (error) {
+      setNoticeToast(error instanceof Error ? error.message : "Could not create account.");
+      return { ok: false };
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function handleAccountResetStart(email) {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) {
+      setNoticeToast("Enter your email first.");
+      return { ok: false };
+    }
+    if (accountBusy) return { ok: false };
+
+    setAccountBusy(true);
+    try {
+      const result = await requestPasswordResetCode(cleanEmail);
+      setNoticeToast("If this email exists, a reset link was sent.");
+      return {
+        ok: true,
+        debugResetLink:
+          typeof result?.debugResetLink === "string" ? result.debugResetLink : "",
+      };
+    } catch (error) {
+      setNoticeToast(
+        error instanceof Error ? error.message : "Could not send password reset link."
+      );
+      return { ok: false };
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function handleAccountResetVerify({ token, password }) {
+    const cleanToken = String(token || "").trim();
+    const cleanPassword = String(password || "");
+    if (!cleanToken || !cleanPassword) {
+      setNoticeToast("Enter your new password.");
+      return { ok: false };
+    }
+    if (accountBusy) return { ok: false };
+
+    setAccountBusy(true);
+    try {
+      const result = await completePasswordReset({
+        token: cleanToken,
+        password: cleanPassword,
+      });
+
+      setAccountUser(result?.user || null);
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+      setAccountResetToken("");
+      await bootstrapAccountAfterSignIn({ silent: true });
+      setNoticeToast("Password reset complete.");
+      return { ok: true };
+    } catch (error) {
+      setNoticeToast(error instanceof Error ? error.message : "Could not reset password.");
+      return { ok: false };
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function handleAccountLogout() {
+    if (accountBusy) return;
+    setAccountBusy(true);
+    try {
+      const result = await logoutAccount();
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+    } catch {
+      // Ignore logout transport errors; clear local session state regardless.
+    } finally {
+      setAccountBusy(false);
+      setAccountUser(null);
+      setNoticeToast("Signed out.");
+    }
+  }
+
   function snapshotBills() {
     try {
       return JSON.parse(JSON.stringify(bills));
@@ -447,13 +1010,14 @@ export default function App() {
 
   function handleDeleteWithUndo(id) {
     const before = snapshotBills();
+    createRiskRestorePoint("delete-bill");
     deleteBill(id);
     enqueueUndoToast("Bill deleted", () => replaceAllBills(before));
   }
 
   function handleClearWithUndo() {
     const before = snapshotBills();
-    createRiskRestorePoint("clear");
+    createRiskRestorePoint("clear-all");
     clearAll();
     enqueueUndoToast("All bills cleared", () => replaceAllBills(before));
   }
@@ -606,40 +1170,53 @@ export default function App() {
     }
   }
 
-  function createRestorePreview(nextBills) {
-    const currentById = new Map(
-      (Array.isArray(bills) ? bills : []).map((b) => [String(b.id), b])
-    );
-    const nextById = new Map(
-      (Array.isArray(nextBills) ? nextBills : []).map((b) => [String(b.id), b])
-    );
-
-    let added = 0;
-    let updated = 0;
-    let deleted = 0;
-
-    nextById.forEach((nextBill, id) => {
-      const current = currentById.get(id);
-      if (!current) {
-        added += 1;
-        return;
-      }
-      if (JSON.stringify(current) !== JSON.stringify(nextBill)) {
-        updated += 1;
-      }
+  function createRestorePreviewBundle(nextBills) {
+    const replacePlan = buildRestorePlan({
+      currentBills: bills,
+      incomingBills: nextBills,
+      mode: "replace",
+      conflictPolicy: "overwrite",
+    });
+    const mergeOverwritePlan = buildRestorePlan({
+      currentBills: bills,
+      incomingBills: nextBills,
+      mode: "merge",
+      conflictPolicy: "overwrite",
+    });
+    const mergeSkipPlan = buildRestorePlan({
+      currentBills: bills,
+      incomingBills: nextBills,
+      mode: "merge",
+      conflictPolicy: "skip",
     });
 
-    currentById.forEach((_, id) => {
-      if (!nextById.has(id)) deleted += 1;
-    });
+    const plans = {
+      "replace:overwrite": replacePlan.preview,
+      "merge:overwrite": mergeOverwritePlan.preview,
+      "merge:skip": mergeSkipPlan.preview,
+    };
 
     return {
-      added,
-      updated,
-      deleted,
-      incoming: nextById.size,
-      current: currentById.size,
+      defaultMode: "replace",
+      defaultConflictPolicy: "overwrite",
+      plans,
     };
+  }
+
+  function formatRestoreAuditMessage(preview) {
+    const added = Number.isFinite(Number(preview?.added)) ? Number(preview.added) : 0;
+    const updated = Number.isFinite(Number(preview?.updated)) ? Number(preview.updated) : 0;
+    const deleted = Number.isFinite(Number(preview?.deleted)) ? Number(preview.deleted) : 0;
+    const conflicts = Number.isFinite(Number(preview?.conflicts))
+      ? Number(preview.conflicts)
+      : 0;
+    const skipped = Number.isFinite(Number(preview?.skipped)) ? Number(preview.skipped) : 0;
+    const modeLabel = preview?.mode === "merge" ? "Merge applied" : "Restore applied";
+    const conflictLabel =
+      conflicts > 0
+        ? ` | conflicts:${conflicts}${skipped > 0 ? `, kept:${skipped}` : ""}`
+        : "";
+    return `${modeLabel} | +${added} / ~${updated} / -${deleted}${conflictLabel}`;
   }
 
   async function handleRestorePreview(file) {
@@ -690,14 +1267,23 @@ export default function App() {
         };
       }
 
+      const previewBundle = createRestorePreviewBundle(restoredBills);
+      const preview =
+        previewBundle.plans[
+          `${previewBundle.defaultMode}:${previewBundle.defaultConflictPolicy}`
+        ];
       return {
         ok: true,
         state: "preview",
         title: "Restore preview",
-        preview: createRestorePreview(restoredBills),
+        preview,
         data: {
           bills: restoredBills,
           notifyEnabled: Boolean(validation.data.notifyEnabled),
+          previewBundle,
+          restoreMode: previewBundle.defaultMode,
+          conflictPolicy: previewBundle.defaultConflictPolicy,
+          preview,
         },
       };
     } catch {
@@ -723,12 +1309,23 @@ export default function App() {
         };
       }
 
+      const mode = payload?.restoreMode === "merge" ? "merge" : "replace";
+      const conflictPolicy = payload?.conflictPolicy === "skip" ? "skip" : "overwrite";
+      const plan = buildRestorePlan({
+        currentBills: bills,
+        incomingBills: payload.bills,
+        mode,
+        conflictPolicy,
+      });
+
       const beforeBills = snapshotBills();
       const beforeNotifyEnabled = notifyEnabled;
-      createRiskRestorePoint("restore");
-      replaceAllBills(payload.bills);
-      setNotifyEnabled(Boolean(payload.notifyEnabled));
-      enqueueUndoToast("Backup restored", () => {
+      createRiskRestorePoint(mode === "merge" ? "restore-merge" : "restore-import");
+      replaceAllBills(plan.bills);
+      if (mode === "replace") {
+        setNotifyEnabled(Boolean(payload.notifyEnabled));
+      }
+      enqueueUndoToast(formatRestoreAuditMessage(plan.preview), () => {
         replaceAllBills(beforeBills);
         setNotifyEnabled(beforeNotifyEnabled);
       });
@@ -754,51 +1351,112 @@ export default function App() {
     <div className={`app ${compactMode ? "compactMode" : ""} density-${tableDensity}`}>
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenAccount={() => setAccountOpen(true)}
+        accountSignedIn={Boolean(accountUser?.id)}
         onAdd={() => {
           setEditingId(null);
           setEditorOpen(true);
         }}
       />
 
-      <SettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        maxRestoreFileBytes={MAX_RESTORE_FILE_BYTES}
-        notifyEnabled={notifyEnabled}
-        setNotifyEnabled={handleNotifyToggle}
-        notificationMode={notificationMode}
-        setNotificationMode={setNotificationMode}
-        compactMode={compactMode}
-        setCompactMode={setCompactMode}
-        tableDensity={tableDensity}
-        setTableDensity={setTableDensity}
-        hasRiskRestorePoint={Boolean(riskRestorePoint)}
-        onRollbackRiskRestore={rollbackRiskRestorePoint}
-        canInstall={Boolean(installPromptEvent)}
-        onInstall={handleInstallApp}
-        onBackup={() => {
-          try {
-            const payload = createBackupPayload({ bills, notifyEnabled });
-            const blob = new Blob([JSON.stringify(payload, null, 2)], {
-              type: "application/json",
-            });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            const stamp = new Date().toISOString().slice(0, 10);
-            a.download = `bills-backup-${stamp}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-            setNoticeToast("Backup downloaded.");
-          } catch {
-            setNoticeToast("Backup failed.");
-          }
-        }}
-        onRestorePreview={handleRestorePreview}
-        onRestoreApply={handleRestoreApply}
-        onTestNotification={handleTestNotification}
-        onClear={() => setClearConfirmOpen(true)}
-      />
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <SettingsDialog
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            maxRestoreFileBytes={MAX_RESTORE_FILE_BYTES}
+            notifyEnabled={notifyEnabled}
+            setNotifyEnabled={handleNotifyToggle}
+            notificationMode={notificationMode}
+            setNotificationMode={setNotificationMode}
+            compactMode={compactMode}
+            setCompactMode={setCompactMode}
+            tableDensity={tableDensity}
+            setTableDensity={setTableDensity}
+            lastBackupAt={lastBackupAt}
+            hasRiskRestorePoint={Boolean(riskRestorePoint)}
+            onRollbackRiskRestore={rollbackRiskRestorePoint}
+            canInstall={Boolean(installPromptEvent)}
+            onInstall={handleInstallApp}
+            onBackup={() => {
+              try {
+                const payload = createBackupPayload({ bills, notifyEnabled });
+                const blob = new Blob([JSON.stringify(payload, null, 2)], {
+                  type: "application/json",
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                const stamp = new Date().toISOString().slice(0, 10);
+                a.download = `bills-backup-${stamp}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                const backupAt = new Date().toISOString();
+                setLastBackupAt(backupAt);
+                try {
+                  localStorage.setItem(LAST_BACKUP_AT_KEY, backupAt);
+                } catch {
+                  pushStorageWarning();
+                }
+                setNoticeToast("Backup downloaded.");
+              } catch {
+                setNoticeToast("Backup failed.");
+              }
+            }}
+            onRestorePreview={handleRestorePreview}
+            onRestoreApply={handleRestoreApply}
+            onTestNotification={handleTestNotification}
+            onClear={() => setClearConfirmOpen(true)}
+          />
+        </Suspense>
+      ) : null}
+
+      {accountOpen ? (
+        <Suspense fallback={null}>
+          <AccountDialog
+            onClose={() => {
+              setAccountOpen(false);
+              setAccountResetToken("");
+              if (mobileTab === "account") {
+                setMobileTab("bills");
+              }
+            }}
+            accountUser={accountUser}
+            accountBusy={accountBusy}
+            accountSyncBusy={accountSyncBusy}
+            accountPullBusy={Boolean(actionLoadingMap["account:pull"])}
+            accountPushBusy={Boolean(actionLoadingMap["account:push"])}
+            accountStorageMode={accountStorageMode}
+            accountAutoSync={accountAutoSync}
+            setAccountAutoSync={setAccountAutoSync}
+            lastAccountSyncAt={lastAccountSyncAt}
+            passwordResetToken={accountResetToken}
+            onClearPasswordResetToken={() => setAccountResetToken("")}
+            onAuthModeChanged={() => setNoticeToast(null)}
+            onAccountLogin={(email, password) =>
+              handleAccountLoginSubmit({ email, password })
+            }
+            onAccountSignupCreate={(email, password) =>
+              handleAccountSignupCreate({ email, password })
+            }
+            onAccountResetStart={handleAccountResetStart}
+            onAccountResetVerify={({ token, password }) =>
+              handleAccountResetVerify({ token, password })
+            }
+            onAccountLogout={handleAccountLogout}
+            onAccountPull={async () => {
+              await runWithActionLoading("account:pull", () =>
+                handleAccountPull({ silent: false })
+              );
+            }}
+            onAccountPush={async () => {
+              await runWithActionLoading("account:push", () =>
+                handleAccountPush({ silent: false })
+              );
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       <div className="container">
         <div ref={dueSoonRef}>
@@ -983,106 +1641,115 @@ export default function App() {
       {!hasBlockingModal ? (
         <MobileBottomNav
           active={mobileTab}
+          accountSignedIn={Boolean(accountUser?.id)}
           onSelect={(tab) => {
             setMobileTab(tab);
             if (tab === "bills") scrollToRef(billsRef);
             if (tab === "due") scrollToRef(dueSoonRef);
             if (tab === "stats") scrollToRef(statsRef);
+            if (tab === "account") setAccountOpen(true);
           }}
         />
       ) : null}
 
       {editorOpen ? (
-        <BillEditorDialog
-          onClose={() => setEditorOpen(false)}
-          bill={editingBill}
-          onSave={(data) => {
-            if (editingBill) {
-              runWithUndo("Bill updated", () => {
-                updateBill(editingBill.id, data);
-              });
-            } else {
-              runWithUndo("Bill added", () => {
-                addBill(data);
-              });
-            }
-            setEditorOpen(false);
-          }}
-        />
+        <Suspense fallback={null}>
+          <BillEditorDialog
+            onClose={() => setEditorOpen(false)}
+            bill={editingBill}
+            onSave={(data) => {
+              if (editingBill) {
+                runWithUndo("Bill updated", () => {
+                  updateBill(editingBill.id, data);
+                });
+              } else {
+                runWithUndo("Bill added", () => {
+                  addBill(data);
+                });
+              }
+              setEditorOpen(false);
+            }}
+          />
+        </Suspense>
       ) : null}
 
-      <BillDetailsDialog
-        open={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
-        bill={selectedBill}
-        onEdit={() => {
-          if (!selectedBill) return;
-          setDetailsOpen(false);
-          setEditingId(selectedBill.id);
-          setEditorOpen(true);
-        }}
-        onMarkPaid={() => {
-          if (!selectedBill) return;
-          return handleMarkPaidWithUndo(selectedBill.id);
-        }}
-        markPaidLoading={selectedActionLoading.markPaid}
-        onAddPayment={async (payment) => {
-          if (!selectedBill) return;
-          await runWithActionLoading(`bill:${selectedBill.id}:paymentSubmit`, () => {
-            runWithUndo("Payment added", () => {
-              addPaymentAndAdvance(selectedBill.id, payment);
-            });
-          });
-        }}
-        paymentSubmitLoading={selectedActionLoading.paymentSubmit}
-        onUpdatePayment={async (paymentId, patch) => {
-          if (!selectedBill) return;
-          await runWithActionLoading(`bill:${selectedBill.id}:paymentSubmit`, () => {
-            runWithUndo("Payment updated", () => {
-              updatePayment(selectedBill.id, paymentId, patch);
-            });
-          });
-        }}
-        paymentDeletingId={selectedActionLoading.paymentDeletingId}
-        onDeletePayment={async (paymentId) => {
-          if (!selectedBill) return;
-          await runWithActionLoading(
-            `bill:${selectedBill.id}:paymentDelete:${paymentId}`,
-            () => {
-              runWithUndo("Payment deleted", () => {
-                deletePayment(selectedBill.id, paymentId);
+      {detailsOpen ? (
+        <Suspense fallback={null}>
+          <BillDetailsDialog
+            open={detailsOpen}
+            onClose={() => setDetailsOpen(false)}
+            bill={selectedBill}
+            onEdit={() => {
+              if (!selectedBill) return;
+              setDetailsOpen(false);
+              setEditingId(selectedBill.id);
+              setEditorOpen(true);
+            }}
+            onMarkPaid={() => {
+              if (!selectedBill) return;
+              return handleMarkPaidWithUndo(selectedBill.id);
+            }}
+            markPaidLoading={selectedActionLoading.markPaid}
+            onAddPayment={async (payment) => {
+              if (!selectedBill) return;
+              await runWithActionLoading(`bill:${selectedBill.id}:paymentSubmit`, () => {
+                runWithUndo("Payment added", () => {
+                  addPaymentAndAdvance(selectedBill.id, payment);
+                });
               });
-            },
-            340
-          );
-        }}
-        onUpdateNotes={async (notes) => {
-          if (!selectedBill) return;
-          await runWithActionLoading(`bill:${selectedBill.id}:notesSave`, () => {
-            runWithUndo("Notes updated", () => {
-              updateNotes(selectedBill.id, notes);
-            });
-          });
-        }}
-        notesSaveLoading={selectedActionLoading.notesSave}
-        onArchiveToggle={(archived) => {
-          if (!selectedBill) return;
-          handleArchiveToggleWithUndo(selectedBill.id, archived);
-        }}
-        onSnoozeReminder={(mode) => {
-          if (!selectedBill) return;
-          handleReminderSnoozeWithUndo(selectedBill.id, mode);
-        }}
-        onDuplicate={() => {
-          if (!selectedBill) return;
-          handleDuplicateWithUndo(selectedBill.id);
-        }}
-        onDelete={() => {
-          if (!selectedBill) return;
-          handleDeleteWithUndo(selectedBill.id);
-          setDetailsOpen(false);
-        }}
-      />
+            }}
+            paymentSubmitLoading={selectedActionLoading.paymentSubmit}
+            onUpdatePayment={async (paymentId, patch) => {
+              if (!selectedBill) return;
+              await runWithActionLoading(`bill:${selectedBill.id}:paymentSubmit`, () => {
+                runWithUndo("Payment updated", () => {
+                  updatePayment(selectedBill.id, paymentId, patch);
+                });
+              });
+            }}
+            paymentDeletingId={selectedActionLoading.paymentDeletingId}
+            onDeletePayment={async (paymentId) => {
+              if (!selectedBill) return;
+              await runWithActionLoading(
+                `bill:${selectedBill.id}:paymentDelete:${paymentId}`,
+                () => {
+                  createRiskRestorePoint("delete-payment");
+                  runWithUndo("Payment deleted", () => {
+                    deletePayment(selectedBill.id, paymentId);
+                  });
+                },
+                340
+              );
+            }}
+            onUpdateNotes={async (notes) => {
+              if (!selectedBill) return;
+              await runWithActionLoading(`bill:${selectedBill.id}:notesSave`, () => {
+                runWithUndo("Notes updated", () => {
+                  updateNotes(selectedBill.id, notes);
+                });
+              });
+            }}
+            notesSaveLoading={selectedActionLoading.notesSave}
+            onArchiveToggle={(archived) => {
+              if (!selectedBill) return;
+              handleArchiveToggleWithUndo(selectedBill.id, archived);
+            }}
+            onSnoozeReminder={(mode) => {
+              if (!selectedBill) return;
+              handleReminderSnoozeWithUndo(selectedBill.id, mode);
+            }}
+            onDuplicate={() => {
+              if (!selectedBill) return;
+              handleDuplicateWithUndo(selectedBill.id);
+            }}
+            onDelete={() => {
+              if (!selectedBill) return;
+              handleDeleteWithUndo(selectedBill.id);
+              setDetailsOpen(false);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       {clearConfirmOpen ? (
         <div
@@ -1128,19 +1795,67 @@ export default function App() {
         </div>
       ) : null}
 
-      {currentUndoToast || noticeToast ? (
+      {currentUndoToast || noticeToast || updateReady ? (
         <div className="toastDock">
-          {!currentUndoToast && noticeToast ? (
-            <div className="appToast noticeToast" role="status" aria-live="polite">
-              <span className="noticeToastIcon" aria-hidden="true">
+          {updateReady ? (
+            <div className="appToast updateToast" role="status" aria-live="polite">
+              <span className="noticeToastIcon updateToastIcon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none">
                   <path
-                    d="m6.8 12.4 3.2 3.2 7.2-7.2"
+                    d="M20 12a8 8 0 1 1-2.3-5.6"
                     stroke="currentColor"
                     strokeWidth="2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
+                  <path
+                    d="M20 4v5h-5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+              <span>New version available</span>
+              <button
+                type="button"
+                className="toastInlineAction"
+                onClick={() => window.location.reload()}
+              >
+                Refresh
+              </button>
+            </div>
+          ) : null}
+
+          {!currentUndoToast && noticeToast ? (
+            <div
+              className={`appToast noticeToast ${noticeToastIsError ? "is-error" : ""}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span
+                className={`noticeToastIcon ${noticeToastIsError ? "is-error" : ""}`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 24" fill="none">
+                  {noticeToastIsError ? (
+                    <path
+                      d="M8 8l8 8M16 8l-8 8"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : (
+                    <path
+                      d="m6.8 12.4 3.2 3.2 7.2-7.2"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
                 </svg>
               </span>
               <span>{noticeToast}</span>
@@ -1181,4 +1896,5 @@ export default function App() {
     </div>
   );
 }
+
 

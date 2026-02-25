@@ -4,19 +4,22 @@ const ITEMS = [
   { id: "bills", label: "Bills", icon: BillsIcon },
   { id: "due", label: "Due", icon: BellIcon },
   { id: "stats", label: "Stats", icon: ChartIcon },
+  { id: "account", label: "Account", icon: AccountIcon },
 ];
 
-export default function MobileBottomNav({ active, onSelect }) {
+export default function MobileBottomNav({ active, onSelect, accountSignedIn }) {
   return (
     <nav className="mobileBottomNav" aria-label="Primary navigation">
       {ITEMS.map((item) => {
         const Icon = item.icon;
         const isActive = active === item.id;
+        const isAccount = item.id === "account";
+        const signedClass = isAccount && accountSignedIn ? "is-signed-in" : "";
         return (
           <button
             key={item.id}
             type="button"
-            className={`mobileBottomNavBtn ${isActive ? "active" : ""}`}
+            className={`mobileBottomNavBtn ${isActive ? "active" : ""} ${signedClass}`}
             onClick={() => onSelect?.(item.id)}
             aria-current={isActive ? "page" : undefined}
           >
@@ -59,6 +62,20 @@ function ChartIcon() {
       <rect x="6.5" y="11" width="2.8" height="6.5" rx="1" stroke="currentColor" strokeWidth="1.8" />
       <rect x="10.6" y="8" width="2.8" height="9.5" rx="1" stroke="currentColor" strokeWidth="1.8" />
       <rect x="14.7" y="5" width="2.8" height="12.5" rx="1" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+function AccountIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M6.2 18.2a5.8 5.8 0 0 1 11.6 0"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
