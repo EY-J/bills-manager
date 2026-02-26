@@ -52,7 +52,6 @@ async function readBlobValue(key, blobConfig) {
   const result = await blobGet(pathname, {
     access: blobConfig.access,
     token: blobConfig.token,
-    useCache: false,
   });
   if (!result || result.statusCode !== 200 || !result.stream) return null;
   return new Response(result.stream).text();
