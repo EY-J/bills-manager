@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { BlobNotFoundError, del as blobDel, get as blobGet, put as blobPut } from "@vercel/blob";
+import { Buffer } from "node:buffer";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
 const LOCAL_STORE_CACHE_KEY = "__bills_manager_account_store_local_cache_v1__";
+const DEFAULT_BLOB_KEY_PREFIX = "account-store-v1";
 
 function normalizeKvBaseUrl(value) {
   const raw = String(value || "").trim();
@@ -16,6 +19,67 @@ function getKvConfig() {
   const token = String(process.env.KV_REST_API_TOKEN || "").trim();
   if (!url || !token) return null;
   return { url, token };
+}
+
+function normalizeBlobKeyPrefix(value) {
+  const raw = String(value || "")
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  return raw || DEFAULT_BLOB_KEY_PREFIX;
+}
+
+function getBlobConfig() {
+  const token = String(process.env.BLOB_READ_WRITE_TOKEN || "").trim();
+  if (!token) return null;
+  const access = String(process.env.ACCOUNT_BLOB_ACCESS || "")
+    .trim()
+    .toLowerCase();
+  return {
+    token,
+    access: access === "private" ? "private" : "public",
+    keyPrefix: normalizeBlobKeyPrefix(process.env.ACCOUNT_BLOB_PREFIX),
+  };
+}
+
+function blobPathForKey(key, keyPrefix) {
+  const encoded = Buffer.from(String(key || ""), "utf8").toString("base64url");
+  return `${keyPrefix}/${encoded}.json`;
+}
+
+async function readBlobValue(key, blobConfig) {
+  const pathname = blobPathForKey(key, blobConfig.keyPrefix);
+  const result = await blobGet(pathname, {
+    access: blobConfig.access,
+    token: blobConfig.token,
+    useCache: false,
+  });
+  if (!result || result.statusCode !== 200 || !result.stream) return null;
+  return new Response(result.stream).text();
+}
+
+async function writeBlobValue(key, rawValue, blobConfig) {
+  const pathname = blobPathForKey(key, blobConfig.keyPrefix);
+  await blobPut(pathname, rawValue, {
+    access: blobConfig.access,
+    token: blobConfig.token,
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: "application/json; charset=utf-8",
+    cacheControlMaxAge: 60,
+  });
+}
+
+async function deleteBlobValue(key, blobConfig) {
+  const pathname = blobPathForKey(key, blobConfig.keyPrefix);
+  try {
+    await blobDel(pathname, {
+      token: blobConfig.token,
+    });
+  } catch (error) {
+    if (error instanceof BlobNotFoundError) return;
+    throw error;
+  }
 }
 
 function allowLocalFallback() {
@@ -146,11 +210,13 @@ async function withLocalStoreWrite(mutator) {
 }
 
 export function getStoreMode() {
-  return getKvConfig() ? "kv" : "local";
+  if (getKvConfig()) return "kv";
+  if (getBlobConfig()) return "blob";
+  return "local";
 }
 
 export function isPersistentStoreConfigured() {
-  return Boolean(getKvConfig());
+  return Boolean(getKvConfig() || getBlobConfig());
 }
 
 function parsePipelineResult(raw, expectedLength) {
@@ -173,10 +239,7 @@ function parsePipelineResult(raw, expectedLength) {
 
 async function runKvPipeline(commands) {
   const config = getKvConfig();
-  if (!config) {
-    if (allowLocalFallback()) return null;
-    throw new Error("Cloud account storage is not configured.");
-  }
+  if (!config) return null;
 
   const response = await fetch(`${config.url}/pipeline`, {
     method: "POST",
@@ -205,35 +268,68 @@ function parseJsonString(raw) {
 }
 
 export async function storeGetJson(key) {
-  const commands = [["GET", String(key)]];
+  const normalizedKey = String(key);
+  const commands = [["GET", normalizedKey]];
   const kvResult = await runKvPipeline(commands);
   if (kvResult) {
     return parseJsonString(kvResult[0]);
   }
 
+  const blobConfig = getBlobConfig();
+  if (blobConfig) {
+    const raw = await readBlobValue(normalizedKey, blobConfig);
+    return parseJsonString(raw);
+  }
+
+  if (!allowLocalFallback()) {
+    throw new Error("Cloud account storage is not configured.");
+  }
+
   const cache = await ensureLocalStoreLoaded();
-  const raw = cache.map.get(String(key));
+  const raw = cache.map.get(normalizedKey);
   return parseJsonString(raw);
 }
 
 export async function storeSetJson(key, value) {
+  const normalizedKey = String(key);
   const raw = JSON.stringify(value);
-  const commands = [["SET", String(key), raw]];
+  const commands = [["SET", normalizedKey, raw]];
   const kvResult = await runKvPipeline(commands);
   if (kvResult) return;
 
+  const blobConfig = getBlobConfig();
+  if (blobConfig) {
+    await writeBlobValue(normalizedKey, raw, blobConfig);
+    return;
+  }
+
+  if (!allowLocalFallback()) {
+    throw new Error("Cloud account storage is not configured.");
+  }
+
   await withLocalStoreWrite((map) => {
-    map.set(String(key), raw);
+    map.set(normalizedKey, raw);
   });
 }
 
 export async function storeDelete(key) {
-  const commands = [["DEL", String(key)]];
+  const normalizedKey = String(key);
+  const commands = [["DEL", normalizedKey]];
   const kvResult = await runKvPipeline(commands);
   if (kvResult) return;
 
+  const blobConfig = getBlobConfig();
+  if (blobConfig) {
+    await deleteBlobValue(normalizedKey, blobConfig);
+    return;
+  }
+
+  if (!allowLocalFallback()) {
+    throw new Error("Cloud account storage is not configured.");
+  }
+
   await withLocalStoreWrite((map) => {
-    map.delete(String(key));
+    map.delete(normalizedKey);
   });
 }
 

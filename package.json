@@ -17,6 +17,7 @@
     "test:sw-upgrade": "node scripts/sw-upgrade-smoke.mjs"
   },
   "dependencies": {
+    "@vercel/blob": "^2.3.0",
     "framer-motion": "^12.34.2",
     "lucide-react": "^0.575.0",
     "nodemailer": "^7.0.13",

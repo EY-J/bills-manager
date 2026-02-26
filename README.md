@@ -43,8 +43,9 @@ Use `.env.example` as reference.
 - `VITE_ERROR_REPORT_ENDPOINT` (optional)
   - Recommended on Vercel: `/api/runtime-errors`
   - If empty, runtime errors are stored locally only.
-- `KV_REST_API_URL` and `KV_REST_API_TOKEN`
-  - Required in Vercel production for account sync storage.
+- Persistent account store (choose one):
+  - KV: `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+  - or Blob: `BLOB_READ_WRITE_TOKEN`
 - `AUTH_SESSION_SECRET`
   - Required in Vercel production for secure login session cookies.
 - Email provider configuration (choose one):
@@ -135,8 +136,9 @@ Critical flow checks include:
    `Project -> Settings -> Environment Variables`
    - `VITE_APP_VERSION`
    - `VITE_ERROR_REPORT_ENDPOINT` (optional, recommended: `/api/runtime-errors`)
-   - `KV_REST_API_URL`
-   - `KV_REST_API_TOKEN`
+   - Persistent account store:
+     - KV: `KV_REST_API_URL`, `KV_REST_API_TOKEN`
+     - or Blob: `BLOB_READ_WRITE_TOKEN`
    - `AUTH_SESSION_SECRET`
    - Email provider (choose one):
      - Gmail SMTP: `GMAIL_SMTP_USER`, `GMAIL_SMTP_APP_PASSWORD`
