@@ -222,7 +222,11 @@ async function runAuthModalChecks(page, viewportName) {
     assert.equal(await primaryActionButton.isDisabled(), false);
   }, `${viewportName}: sign-in button should enable with email+password`);
 
-  await modal.locator(".settingsPillCreate").first().click();
+  await modal
+    .locator(".accountAssistBtn")
+    .filter({ hasText: /^Create one$/i })
+    .first()
+    .click();
   const createEmailInput = modal.locator('input[aria-label="Email"]').first();
   const createPasswordInput = modal.locator('input[aria-label="Password"]').first();
   const confirmPasswordInput = modal.locator('input[aria-label="Re-enter password"]').first();
@@ -240,26 +244,55 @@ async function runAuthModalChecks(page, viewportName) {
     assert.equal(await primaryActionButton.isDisabled(), false);
   }, `${viewportName}: create account button should enable for valid password`);
 
-  await modal.locator(".settingsPillSignIn").first().click();
-  await modal.locator(".accountAssistBtn").filter({ hasText: "Forgot password?" }).first().click();
+  await modal
+    .locator(".accountAssistBtn")
+    .filter({ hasText: /^Sign in$/i })
+    .first()
+    .click();
+  await modal
+    .locator(".accountAssistBtn")
+    .filter({ hasText: /Forgot password/i })
+    .first()
+    .click();
 
   const resetActionButton = modal
     .locator(".accountDataActions.is-single .settingsActionPrimary")
     .first();
   await waitForCondition(async () => {
     await resetActionButton.waitFor({ state: "visible", timeout: 3_000 });
-  }, `${viewportName}: reset action button visible`);
+  }, `${viewportName}: recovery reset action button visible`);
 
   const resetEmailInput = modal.locator('input[aria-label="Email"]').first();
+  const recoveryCodeInput = modal.locator('input[aria-label="Recovery code"]').first();
+  const resetPasswordInput = modal.locator('input[aria-label="New password"]').first();
+  const resetConfirmInput = modal.locator('input[aria-label="Re-enter new password"]').first();
+
   await resetEmailInput.fill("");
+  await recoveryCodeInput.fill("");
+  await resetPasswordInput.fill("");
+  await resetConfirmInput.fill("");
   await waitForCondition(async () => {
     assert.equal(await resetActionButton.isDisabled(), true);
-  }, `${viewportName}: reset link button disabled without email`);
+  }, `${viewportName}: recovery reset button disabled without required fields`);
 
   await resetEmailInput.fill("reset.user@example.com");
+  await recoveryCodeInput.fill("1234-5678-9012");
+  await resetPasswordInput.fill("weak-pass-123");
+  await resetConfirmInput.fill("weak-pass-123");
+  await waitForCondition(async () => {
+    assert.equal(await resetActionButton.isDisabled(), true);
+  }, `${viewportName}: recovery reset button stays disabled for weak password`);
+
+  await resetPasswordInput.fill("Strong-pass-123");
+  await resetConfirmInput.fill("Strong-pass-124");
+  await waitForCondition(async () => {
+    assert.equal(await resetActionButton.isDisabled(), true);
+  }, `${viewportName}: recovery reset button stays disabled for mismatched password confirmation`);
+
+  await resetConfirmInput.fill("Strong-pass-123");
   await waitForCondition(async () => {
     assert.equal(await resetActionButton.isDisabled(), false);
-  }, `${viewportName}: reset link button enabled with email`);
+  }, `${viewportName}: recovery reset button enabled when all requirements are valid`);
 }
 
 async function runViewportCheck(browser, viewport, baseUrl) {

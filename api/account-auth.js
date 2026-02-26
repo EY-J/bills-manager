@@ -1,11 +1,13 @@
 import {
   createUser,
+  deleteUserAccount,
   findUserByEmail,
   getStoreMode,
   isPersistentStoreConfigured,
   storeDelete,
   storeGetJson,
   storeSetJson,
+  updateUserRecoveryCode,
   updateUserPassword,
 } from "./_lib/accountStore.js";
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
@@ -24,11 +26,13 @@ import {
   sendSignupVerificationEmail,
   shouldExposeAuthDebugArtifacts,
 } from "./_lib/accountEmail.js";
+import { emitSecurityAlert } from "./_lib/securityAlerts.js";
 
 const MAX_BODY_BYTES = 8 * 1024;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 45;
 const RATE_LIMIT_MAX_BUCKETS = 1200;
+const DISTRIBUTED_RATE_LIMIT_PREFIX = "account:rate-limit";
 const rateLimitBuckets = new Map();
 const SIGNUP_CODE_TTL_MS = 10 * 60 * 1000;
 const SIGNUP_CODE_RESEND_COOLDOWN_MS = 30 * 1000;
@@ -38,6 +42,12 @@ const PASSWORD_RESET_RESEND_COOLDOWN_MS = 30 * 1000;
 const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_FAILURE_MAX_ATTEMPTS = 6;
 const LOGIN_FAILURE_LOCK_MS = 5 * 60 * 1000;
+const RECOVERY_RESET_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const RECOVERY_RESET_FAILURE_MAX_ATTEMPTS = 6;
+const RECOVERY_RESET_FAILURE_LOCK_MS = 10 * 60 * 1000;
+const ABUSE_CHALLENGE_WINDOW_MS = 15 * 60 * 1000;
+const ABUSE_CHALLENGE_THRESHOLD = 3;
+const ABUSE_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const GENERIC_LOGIN_ERROR_MESSAGE = "Invalid email or password.";
 
 function setResponseSecurityHeaders(res) {
@@ -83,6 +93,53 @@ function isRateLimited(ip, now = Date.now()) {
   }
   current.count += 1;
   return current.count > RATE_LIMIT_MAX_REQUESTS;
+}
+
+function normalizeRateLimitIdentifier(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "unknown";
+  return raw.replace(/[^a-z0-9:._-]+/g, "_").slice(0, 120) || "unknown";
+}
+
+function distributedRateLimitKey(scope, identifier) {
+  return `${DISTRIBUTED_RATE_LIMIT_PREFIX}:${normalizeRateLimitIdentifier(
+    scope
+  )}:${normalizeRateLimitIdentifier(identifier)}`;
+}
+
+async function isDistributedRateLimited(
+  scope,
+  identifier,
+  {
+    now = Date.now(),
+    maxRequests = RATE_LIMIT_MAX_REQUESTS,
+    windowMs = RATE_LIMIT_WINDOW_MS,
+  } = {}
+) {
+  if (!isPersistentStoreConfigured()) return false;
+  const key = distributedRateLimitKey(scope, identifier);
+  try {
+    const stored = await storeGetJson(key);
+    if (!stored || typeof stored !== "object") {
+      await storeSetJson(key, { windowStart: now, count: 1 });
+      return false;
+    }
+
+    const windowStart = Number(stored.windowStart || 0);
+    const count = Math.max(0, Number(stored.count || 0));
+    const withinWindow = Number.isFinite(windowStart) && now - windowStart <= windowMs;
+    if (!withinWindow) {
+      await storeSetJson(key, { windowStart: now, count: 1 });
+      return false;
+    }
+
+    const nextCount = count + 1;
+    await storeSetJson(key, { windowStart, count: nextCount });
+    return nextCount > maxRequests;
+  } catch {
+    // Fail open if distributed limiter is temporarily unavailable.
+    return false;
+  }
 }
 
 function isSameOriginRequest(req) {
@@ -186,6 +243,23 @@ function validateVerificationCode(code) {
   return { ok: true, value };
 }
 
+function createRecoveryCode() {
+  const group = () => String(randomInt(0, 10_000)).padStart(4, "0");
+  return `${group()}-${group()}-${group()}`;
+}
+
+function normalizeRecoveryCode(code) {
+  return String(code || "").replace(/\D+/g, "").slice(0, 12);
+}
+
+function validateRecoveryCode(code) {
+  const value = normalizeRecoveryCode(code);
+  if (value.length !== 12) {
+    return { ok: false, reason: "Enter the 12-digit recovery code." };
+  }
+  return { ok: true, value };
+}
+
 function signupCodeKey(email) {
   return `account:signup:code:${normalizeEmail(email)}`;
 }
@@ -198,16 +272,93 @@ function passwordResetTokenKey(tokenHash) {
   return `account:password-reset:token:${String(tokenHash || "")}`;
 }
 
-function loginFailureKey(email) {
-  return `account:login:failure:${normalizeEmail(email)}`;
+function abuseChallengeStateKey(scope, clientIp = "") {
+  return `account:abuse:challenge:${normalizeRateLimitIdentifier(scope)}:${normalizeRateLimitIdentifier(
+    clientIp
+  )}`;
+}
+
+function loginFailureKey(email, clientIp = "") {
+  return `account:login:failure:${normalizeEmail(email)}:${normalizeRateLimitIdentifier(clientIp)}`;
+}
+
+function recoveryResetFailureKey(email, clientIp = "") {
+  return `account:recovery-reset:failure:${normalizeEmail(email)}:${normalizeRateLimitIdentifier(
+    clientIp
+  )}`;
 }
 
 function secondsFromMs(ms) {
   return Math.max(1, Math.ceil(Math.max(0, Number(ms) || 0) / 1000));
 }
 
-async function getLoginFailureState(email, now = Date.now()) {
-  const key = loginFailureKey(email);
+function normalizeChallengeAnswer(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "");
+}
+
+function createMathChallenge() {
+  const left = randomInt(2, 10);
+  const right = randomInt(2, 10);
+  return {
+    prompt: `Quick check: what is ${left} + ${right}?`,
+    answer: String(left + right),
+  };
+}
+
+function createChallengeToken({ scope, clientIp, answer, expiresAt }) {
+  const secret = getVerificationSecret();
+  if (!secret) {
+    throw new Error("AUTH_VERIFICATION_SECRET is required in production.");
+  }
+  const payload = {
+    scope: normalizeRateLimitIdentifier(scope),
+    ip: normalizeRateLimitIdentifier(clientIp),
+    answer: normalizeChallengeAnswer(answer),
+    exp: Number(expiresAt || 0),
+  };
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", secret).update(encoded).digest("base64url");
+  return `${encoded}.${signature}`;
+}
+
+function verifyChallengeToken({ token, scope, clientIp, answer, now = Date.now() }) {
+  const rawToken = String(token || "").trim();
+  if (!rawToken.includes(".")) return false;
+  const [encodedPayload, signature] = rawToken.split(".", 2);
+  if (!encodedPayload || !signature) return false;
+
+  const secret = getVerificationSecret();
+  if (!secret) return false;
+
+  const expectedSignature = createHmac("sha256", secret).update(encodedPayload).digest("base64url");
+  if (!safeHashEqual(signature, expectedSignature)) return false;
+
+  try {
+    const decoded = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    if (!decoded || typeof decoded !== "object") return false;
+    const expectedScope = normalizeRateLimitIdentifier(scope);
+    const expectedIp = normalizeRateLimitIdentifier(clientIp);
+    const tokenScope = normalizeRateLimitIdentifier(decoded.scope);
+    const tokenIp = normalizeRateLimitIdentifier(decoded.ip);
+    if (tokenScope !== expectedScope || tokenIp !== expectedIp) return false;
+    const exp = Number(decoded.exp || 0);
+    if (!Number.isFinite(exp) || exp <= now) return false;
+    const tokenAnswer = normalizeChallengeAnswer(decoded.answer);
+    const providedAnswer = normalizeChallengeAnswer(answer);
+    if (!tokenAnswer || !providedAnswer) return false;
+    return safeHashEqual(tokenAnswer, providedAnswer);
+  } catch {
+    return false;
+  }
+}
+
+async function getFailureState({
+  key,
+  windowMs,
+  now = Date.now(),
+}) {
   const stored = await storeGetJson(key);
   if (!stored || typeof stored !== "object") {
     return {
@@ -232,7 +383,7 @@ async function getLoginFailureState(email, now = Date.now()) {
     };
   }
 
-  const withinWindow = Number.isFinite(firstFailedAt) && now - firstFailedAt <= LOGIN_FAILURE_WINDOW_MS;
+  const withinWindow = Number.isFinite(firstFailedAt) && now - firstFailedAt <= windowMs;
   if (!withinWindow || failureCount <= 0) {
     await storeDelete(key);
     return {
@@ -251,14 +402,20 @@ async function getLoginFailureState(email, now = Date.now()) {
   };
 }
 
-async function recordLoginFailure(email, now = Date.now()) {
-  const state = await getLoginFailureState(email, now);
-  const withinWindow = state.firstFailedAt > 0 && now - state.firstFailedAt <= LOGIN_FAILURE_WINDOW_MS;
+async function recordFailure({
+  key,
+  windowMs,
+  maxAttempts,
+  lockMs,
+  now = Date.now(),
+}) {
+  const state = await getFailureState({ key, windowMs, now });
+  const withinWindow = state.firstFailedAt > 0 && now - state.firstFailedAt <= windowMs;
   const firstFailedAt = withinWindow ? state.firstFailedAt : now;
   const failureCount = withinWindow ? state.failureCount + 1 : 1;
 
-  if (failureCount >= LOGIN_FAILURE_MAX_ATTEMPTS) {
-    const blockedUntil = now + LOGIN_FAILURE_LOCK_MS;
+  if (failureCount >= maxAttempts) {
+    const blockedUntil = now + lockMs;
     await storeSetJson(state.key, {
       firstFailedAt,
       failureCount,
@@ -266,7 +423,7 @@ async function recordLoginFailure(email, now = Date.now()) {
     });
     return {
       blockedUntil,
-      retryAfterSeconds: secondsFromMs(LOGIN_FAILURE_LOCK_MS),
+      retryAfterSeconds: secondsFromMs(lockMs),
     };
   }
 
@@ -281,8 +438,138 @@ async function recordLoginFailure(email, now = Date.now()) {
   };
 }
 
-async function clearLoginFailureState(email) {
-  await storeDelete(loginFailureKey(email));
+async function getLoginFailureState(email, clientIp, now = Date.now()) {
+  return getFailureState({
+    key: loginFailureKey(email, clientIp),
+    windowMs: LOGIN_FAILURE_WINDOW_MS,
+    now,
+  });
+}
+
+async function recordLoginFailure(email, clientIp, now = Date.now()) {
+  return recordFailure({
+    key: loginFailureKey(email, clientIp),
+    windowMs: LOGIN_FAILURE_WINDOW_MS,
+    maxAttempts: LOGIN_FAILURE_MAX_ATTEMPTS,
+    lockMs: LOGIN_FAILURE_LOCK_MS,
+    now,
+  });
+}
+
+async function clearLoginFailureState(email, clientIp) {
+  await storeDelete(loginFailureKey(email, clientIp));
+}
+
+async function getRecoveryResetFailureState(email, clientIp, now = Date.now()) {
+  return getFailureState({
+    key: recoveryResetFailureKey(email, clientIp),
+    windowMs: RECOVERY_RESET_FAILURE_WINDOW_MS,
+    now,
+  });
+}
+
+async function recordRecoveryResetFailure(email, clientIp, now = Date.now()) {
+  return recordFailure({
+    key: recoveryResetFailureKey(email, clientIp),
+    windowMs: RECOVERY_RESET_FAILURE_WINDOW_MS,
+    maxAttempts: RECOVERY_RESET_FAILURE_MAX_ATTEMPTS,
+    lockMs: RECOVERY_RESET_FAILURE_LOCK_MS,
+    now,
+  });
+}
+
+async function clearRecoveryResetFailureState(email, clientIp) {
+  await storeDelete(recoveryResetFailureKey(email, clientIp));
+}
+
+async function getAbuseChallengeState(scope, clientIp, now = Date.now()) {
+  const key = abuseChallengeStateKey(scope, clientIp);
+  const stored = await storeGetJson(key);
+  if (!stored || typeof stored !== "object") {
+    return {
+      key,
+      firstAttemptAt: 0,
+      failureCount: 0,
+    };
+  }
+
+  const firstAttemptAt = Number(stored.firstAttemptAt || 0);
+  const failureCount = Math.max(0, Number(stored.failureCount || 0));
+  const withinWindow =
+    Number.isFinite(firstAttemptAt) && firstAttemptAt > 0 && now - firstAttemptAt <= ABUSE_CHALLENGE_WINDOW_MS;
+  if (!withinWindow || failureCount <= 0) {
+    await storeDelete(key);
+    return {
+      key,
+      firstAttemptAt: 0,
+      failureCount: 0,
+    };
+  }
+
+  return {
+    key,
+    firstAttemptAt,
+    failureCount,
+  };
+}
+
+async function recordAbuseChallengeFailure(scope, clientIp, now = Date.now()) {
+  const state = await getAbuseChallengeState(scope, clientIp, now);
+  const withinWindow =
+    state.firstAttemptAt > 0 && now - state.firstAttemptAt <= ABUSE_CHALLENGE_WINDOW_MS;
+  const firstAttemptAt = withinWindow ? state.firstAttemptAt : now;
+  const failureCount = withinWindow ? state.failureCount + 1 : 1;
+  await storeSetJson(state.key, {
+    firstAttemptAt,
+    failureCount,
+  });
+  return {
+    failureCount,
+  };
+}
+
+async function clearAbuseChallengeState(scope, clientIp) {
+  await storeDelete(abuseChallengeStateKey(scope, clientIp));
+}
+
+async function enforceAbuseChallenge(scope, clientIp, payload, now = Date.now()) {
+  const state = await getAbuseChallengeState(scope, clientIp, now);
+  if (state.failureCount < ABUSE_CHALLENGE_THRESHOLD) {
+    return { ok: true };
+  }
+
+  const challengeToken = String(payload?.challengeToken || "").trim();
+  const challengeAnswer = String(payload?.challengeAnswer || "").trim();
+  const verified = verifyChallengeToken({
+    token: challengeToken,
+    scope,
+    clientIp,
+    answer: challengeAnswer,
+    now,
+  });
+  if (verified) {
+    return { ok: true };
+  }
+
+  const challenge = createMathChallenge();
+  const nextToken = createChallengeToken({
+    scope,
+    clientIp,
+    answer: challenge.answer,
+    expiresAt: now + ABUSE_CHALLENGE_TTL_MS,
+  });
+  return {
+    ok: false,
+    status: 428,
+    response: {
+      ok: false,
+      error: "Additional verification is required. Please solve the quick check.",
+      challengeRequired: true,
+      challengeToken: nextToken,
+      challengePrompt: challenge.prompt,
+      challengeExpiresInSeconds: Math.floor(ABUSE_CHALLENGE_TTL_MS / 1000),
+    },
+  };
 }
 
 function getVerificationSecret() {
@@ -311,6 +598,15 @@ function hashPasswordResetToken(token) {
     throw new Error("AUTH_VERIFICATION_SECRET is required in production.");
   }
   const payload = `password-reset-token:${String(token || "").trim()}`;
+  return createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+function hashRecoveryCode(email, code) {
+  const secret = getVerificationSecret();
+  if (!secret) {
+    throw new Error("AUTH_VERIFICATION_SECRET is required in production.");
+  }
+  const payload = `recovery-code:${normalizeEmail(email)}:${normalizeRecoveryCode(code)}`;
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
@@ -408,11 +704,19 @@ function isCloudStorageReady() {
   return process.env.NODE_ENV !== "production";
 }
 
-async function resolveSessionUser(req) {
+async function resolveSessionRecord(req) {
   const session = getSessionFromRequest(req);
   if (!session) return null;
   const user = await findUserByEmail(session.email);
   if (!user || String(user.id || "") !== session.uid) return null;
+  const sessionVersion = Math.max(1, Number(user.sessionVersion || 1));
+  if (sessionVersion !== Number(session.sessionVersion || 1)) return null;
+  return user;
+}
+
+async function resolveSessionUser(req) {
+  const user = await resolveSessionRecord(req);
+  if (!user) return null;
   return publicUser(user);
 }
 
@@ -459,7 +763,20 @@ export default async function handler(req, res) {
   }
 
   const ip = getClientIp(req);
-  if (isRateLimited(ip)) {
+  const rateLimitNow = Date.now();
+  const localRateLimited = isRateLimited(ip, rateLimitNow);
+  const distributedRateLimited = await isDistributedRateLimited("auth-endpoint", ip, {
+    now: rateLimitNow,
+    maxRequests: RATE_LIMIT_MAX_REQUESTS,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+  });
+  if (localRateLimited || distributedRateLimited) {
+    await emitSecurityAlert({
+      type: "auth-endpoint-rate-limit",
+      severity: "warning",
+      message: "Auth endpoint rate limit triggered.",
+      context: { ip },
+    });
     res.setHeader("Retry-After", "60");
     return res.status(429).json({ ok: false, error: "Rate limit exceeded" });
   }
@@ -490,6 +807,16 @@ export default async function handler(req, res) {
     // Backward compatible alias; now expects reset token.
     action = "complete-password-reset-token";
   }
+  if (
+    action === "recover-password" ||
+    action === "reset-with-recovery-code" ||
+    action === "complete-password-recovery"
+  ) {
+    action = "complete-password-reset-recovery";
+  }
+  if (action === "delete-account" || action === "deleteaccount" || action === "close-account") {
+    action = "delete-account";
+  }
 
   if (action === "logout") {
     clearSessionCookie(res, req);
@@ -502,9 +829,48 @@ export default async function handler(req, res) {
     action !== "complete-signup" &&
     action !== "request-password-reset-link" &&
     action !== "complete-password-reset-token" &&
+    action !== "complete-password-reset-recovery" &&
+    action !== "delete-account" &&
     action !== "login"
   ) {
     return res.status(422).json({ ok: false, error: "Unsupported auth action." });
+  }
+
+  if (action === "delete-account") {
+    const sessionUser = await resolveSessionRecord(req);
+    if (!sessionUser) {
+      return res.status(401).json({ ok: false, error: "Unauthorized." });
+    }
+
+    const passwordCheck = validatePassword(payload.password);
+    if (!passwordCheck.ok) {
+      return res.status(422).json({ ok: false, error: passwordCheck.reason });
+    }
+
+    const validPassword = verifyPassword(
+      passwordCheck.value,
+      sessionUser.passwordHash,
+      sessionUser.passwordSalt
+    );
+    if (!validPassword) {
+      await emitSecurityAlert({
+        type: "delete-account-invalid-password",
+        severity: "warning",
+        message: "Delete account attempt failed due to invalid password.",
+        context: {
+          ip,
+          email: sessionUser.email,
+        },
+      });
+      return res.status(401).json({ ok: false, error: "Invalid email or password." });
+    }
+
+    await deleteUserAccount({
+      email: sessionUser.email,
+      userId: sessionUser.id,
+    });
+    clearSessionCookie(res, req);
+    return res.status(200).json({ ok: true, user: null, storageMode: storeMode });
   }
 
   const actionNeedsEmail =
@@ -512,6 +878,7 @@ export default async function handler(req, res) {
     action === "request-signup-code" ||
     action === "complete-signup" ||
     action === "request-password-reset-link" ||
+    action === "complete-password-reset-recovery" ||
     action === "login";
 
   let email = "";
@@ -564,6 +931,16 @@ export default async function handler(req, res) {
       ttlMinutes: Math.round(SIGNUP_CODE_TTL_MS / 60000),
     });
     if (!emailResult.ok) {
+      await emitSecurityAlert({
+        type: "signup-email-delivery-failed",
+        severity: "error",
+        message: "Signup verification email delivery failed.",
+        context: {
+          ip,
+          email,
+          provider: emailResult.provider || "unknown",
+        },
+      });
       await storeDelete(codeKey);
       return res.status(503).json({
         ok: false,
@@ -589,22 +966,36 @@ export default async function handler(req, res) {
       return res.status(422).json({ ok: false, error: passwordCheck.reason });
     }
 
+    const challengeGate = await enforceAbuseChallenge("signup", ip, payload);
+    if (!challengeGate.ok) {
+      return res.status(challengeGate.status || 428).json({
+        ...challengeGate.response,
+        storageMode: storeMode,
+      });
+    }
+
     const existing = await findUserByEmail(email);
     if (existing) {
+      await recordAbuseChallengeFailure("signup", ip);
       return res.status(409).json({ ok: false, error: "Email is already registered." });
     }
 
+    const recoveryCode = createRecoveryCode();
+    const recoveryCodeHash = hashRecoveryCode(email, recoveryCode);
     const { hash, salt } = hashPassword(passwordCheck.value);
     const user = await createUser({
       email,
       passwordHash: hash,
       passwordSalt: salt,
+      recoveryCodeHash,
     });
     await storeDelete(signupCodeKey(email));
+    await clearAbuseChallengeState("signup", ip);
     if (!issueSessionOrFail(res, req, user)) return;
     return res.status(200).json({
       ok: true,
       user: publicUser(user),
+      recoveryCode,
       storageMode: storeMode,
     });
   }
@@ -613,12 +1004,16 @@ export default async function handler(req, res) {
     const existing = await findUserByEmail(email);
     if (!existing) {
       // Return success regardless to avoid account email enumeration.
-      return res.status(200).json({
+      const response = {
         ok: true,
         linkSent: true,
         expiresInSeconds: Math.floor(PASSWORD_RESET_TOKEN_TTL_MS / 1000),
         storageMode: storeMode,
-      });
+      };
+      if (exposeAuthDebugArtifacts) {
+        response.debugNoAccount = true;
+      }
+      return res.status(200).json(response);
     }
 
     const now = Date.now();
@@ -673,6 +1068,16 @@ export default async function handler(req, res) {
       ttlMinutes: Math.round(PASSWORD_RESET_TOKEN_TTL_MS / 60000),
     });
     if (!emailResult.ok) {
+      await emitSecurityAlert({
+        type: "password-reset-email-delivery-failed",
+        severity: "error",
+        message: "Password reset email delivery failed.",
+        context: {
+          ip,
+          email,
+          provider: emailResult.provider || "unknown",
+        },
+      });
       await storeDelete(passwordResetTokenKey(tokenHash));
       await storeDelete(throttleKey);
       return res.status(503).json({
@@ -687,8 +1092,10 @@ export default async function handler(req, res) {
       expiresInSeconds: Math.floor(PASSWORD_RESET_TOKEN_TTL_MS / 1000),
       storageMode: storeMode,
     };
-    if (emailResult.debugResetLink && exposeAuthDebugArtifacts) {
-      response.debugResetLink = emailResult.debugResetLink;
+    if (exposeAuthDebugArtifacts) {
+      // In non-production, always return the reset link so local testing works
+      // even when no email provider is configured.
+      response.debugResetLink = resetUrl;
     }
     return res.status(200).json(response);
   }
@@ -752,13 +1159,129 @@ export default async function handler(req, res) {
       });
     }
 
+    const recoveryCode = createRecoveryCode();
+    const recoveryCodeHash = hashRecoveryCode(email, recoveryCode);
     const { hash, salt } = hashPassword(passwordCheck.value);
     const user = await createUser({
       email,
       passwordHash: hash,
       passwordSalt: salt,
+      recoveryCodeHash,
     });
     await storeDelete(codeKey);
+    if (!issueSessionOrFail(res, req, user)) return;
+    return res.status(200).json({
+      ok: true,
+      user: publicUser(user),
+      recoveryCode,
+      storageMode: storeMode,
+    });
+  }
+
+  if (action === "complete-password-reset-recovery") {
+    const recoveryCodeCheck = validateRecoveryCode(payload.recoveryCode);
+    if (!recoveryCodeCheck.ok) {
+      return res.status(422).json({ ok: false, error: recoveryCodeCheck.reason });
+    }
+    const passwordCheck = validateStrongPassword(payload.password);
+    if (!passwordCheck.ok) {
+      return res.status(422).json({ ok: false, error: passwordCheck.reason });
+    }
+
+    const now = Date.now();
+    const challengeGate = await enforceAbuseChallenge("recovery", ip, payload, now);
+    if (!challengeGate.ok) {
+      return res.status(challengeGate.status || 428).json({
+        ...challengeGate.response,
+        storageMode: storeMode,
+      });
+    }
+    const recoveryFailureState = await getRecoveryResetFailureState(email, ip, now);
+    if (recoveryFailureState.blockedUntil > now) {
+      const retryAfterSeconds = secondsFromMs(recoveryFailureState.blockedUntil - now);
+      await emitSecurityAlert({
+        type: "recovery-reset-lock-active",
+        severity: "warning",
+        message: "Recovery reset blocked due to repeated failures.",
+        context: {
+          ip,
+          email,
+          retryAfterSeconds,
+        },
+      });
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      return res.status(429).json({
+        ok: false,
+        error: `Too many recovery attempts. Try again in ${retryAfterSeconds}s.`,
+      });
+    }
+
+    const existing = await findUserByEmail(email);
+    if (!existing) {
+      await recordAbuseChallengeFailure("recovery", ip, now);
+      const failureState = await recordRecoveryResetFailure(email, ip, now);
+      if (failureState.blockedUntil > now) {
+        const retryAfterSeconds = secondsFromMs(failureState.blockedUntil - now);
+        await emitSecurityAlert({
+          type: "recovery-reset-lock-triggered",
+          severity: "warning",
+          message: "Recovery reset locked after invalid attempts.",
+          context: {
+            ip,
+            email,
+            retryAfterSeconds,
+          },
+        });
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        return res.status(429).json({
+          ok: false,
+          error: `Too many recovery attempts. Try again in ${retryAfterSeconds}s.`,
+        });
+      }
+      return res.status(401).json({ ok: false, error: "Invalid email or recovery code." });
+    }
+
+    const expectedHash = String(existing.recoveryCodeHash || "");
+    const receivedHash = hashRecoveryCode(email, recoveryCodeCheck.value);
+    if (!expectedHash || !safeHashEqual(expectedHash, receivedHash)) {
+      await recordAbuseChallengeFailure("recovery", ip, now);
+      const failureState = await recordRecoveryResetFailure(email, ip, now);
+      if (failureState.blockedUntil > now) {
+        const retryAfterSeconds = secondsFromMs(failureState.blockedUntil - now);
+        await emitSecurityAlert({
+          type: "recovery-reset-lock-triggered",
+          severity: "warning",
+          message: "Recovery reset locked after invalid attempts.",
+          context: {
+            ip,
+            email,
+            retryAfterSeconds,
+          },
+        });
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        return res.status(429).json({
+          ok: false,
+          error: `Too many recovery attempts. Try again in ${retryAfterSeconds}s.`,
+        });
+      }
+      return res.status(401).json({ ok: false, error: "Invalid email or recovery code." });
+    }
+
+    const { hash, salt } = hashPassword(passwordCheck.value);
+    const user = await updateUserPassword({
+      email,
+      passwordHash: hash,
+      passwordSalt: salt,
+    });
+    if (!user) {
+      return res.status(400).json({
+        ok: false,
+        error: "Could not reset password. Please try again.",
+      });
+    }
+
+    await clearAbuseChallengeState("recovery", ip);
+    await clearRecoveryResetFailureState(email, ip);
     if (!issueSessionOrFail(res, req, user)) return;
     return res.status(200).json({
       ok: true,
@@ -834,9 +1357,19 @@ export default async function handler(req, res) {
   const password = passwordCheck.value;
 
   const now = Date.now();
-  const loginFailureState = await getLoginFailureState(email, now);
+  const loginFailureState = await getLoginFailureState(email, ip, now);
   if (loginFailureState.blockedUntil > now) {
     const retryAfterSeconds = secondsFromMs(loginFailureState.blockedUntil - now);
+    await emitSecurityAlert({
+      type: "login-lock-active",
+      severity: "warning",
+      message: "Sign-in blocked due to repeated invalid credentials.",
+      context: {
+        ip,
+        email,
+        retryAfterSeconds,
+      },
+    });
     res.setHeader("Retry-After", String(retryAfterSeconds));
     return res.status(429).json({
       ok: false,
@@ -848,9 +1381,19 @@ export default async function handler(req, res) {
   const validPassword =
     Boolean(user) && verifyPassword(password, user.passwordHash, user.passwordSalt);
   if (!validPassword) {
-    const failureState = await recordLoginFailure(email, now);
+    const failureState = await recordLoginFailure(email, ip, now);
     if (failureState.blockedUntil > now) {
       const retryAfterSeconds = secondsFromMs(failureState.blockedUntil - now);
+      await emitSecurityAlert({
+        type: "login-lock-triggered",
+        severity: "warning",
+        message: "Sign-in lock triggered after repeated invalid credentials.",
+        context: {
+          ip,
+          email,
+          retryAfterSeconds,
+        },
+      });
       res.setHeader("Retry-After", String(retryAfterSeconds));
       return res.status(429).json({
         ok: false,
@@ -860,11 +1403,31 @@ export default async function handler(req, res) {
     return res.status(401).json({ ok: false, error: GENERIC_LOGIN_ERROR_MESSAGE });
   }
 
-  await clearLoginFailureState(email);
-  if (!issueSessionOrFail(res, req, user)) return;
-  return res.status(200).json({
+  let effectiveUser = user;
+  let issuedRecoveryCode = "";
+  if (!String(user?.recoveryCodeHash || "").trim()) {
+    issuedRecoveryCode = createRecoveryCode();
+    const recoveryCodeHash = hashRecoveryCode(email, issuedRecoveryCode);
+    const updated = await updateUserRecoveryCode({
+      email,
+      recoveryCodeHash,
+    });
+    if (updated) {
+      effectiveUser = updated;
+    } else {
+      issuedRecoveryCode = "";
+    }
+  }
+
+  await clearLoginFailureState(email, ip);
+  if (!issueSessionOrFail(res, req, effectiveUser)) return;
+  const response = {
     ok: true,
-    user: publicUser(user),
+    user: publicUser(effectiveUser),
     storageMode: storeMode,
-  });
+  };
+  if (issuedRecoveryCode) {
+    response.recoveryCode = issuedRecoveryCode;
+  }
+  return res.status(200).json(response);
 }

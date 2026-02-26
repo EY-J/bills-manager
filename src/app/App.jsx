@@ -20,13 +20,14 @@ import {
 } from "../features/bills/billsService.js";
 import {
   completePasswordReset,
+  completePasswordResetWithRecoveryCode,
   createAccount,
+  deleteAccount,
   getAccountSession,
   loginAccount,
   logoutAccount,
   pullAccountBackup,
   pushAccountBackup,
-  requestPasswordResetCode,
 } from "../lib/account/accountClient.js";
 
 import {
@@ -49,6 +50,7 @@ const MAX_UNDO_QUEUE = 8;
 const LAST_BACKUP_AT_KEY = "bills_last_backup_at";
 const LAST_ACCOUNT_SYNC_AT_KEY = "bills_last_account_sync_at";
 const ACCOUNT_AUTO_SYNC_KEY = "bills_account_auto_sync";
+const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
 
 function parseRetrySecondsFromMessage(message) {
   const value = String(message || "");
@@ -57,6 +59,37 @@ function parseRetrySecondsFromMessage(message) {
   const seconds = Number(match[1]);
   if (!Number.isFinite(seconds) || seconds <= 0) return 0;
   return Math.max(1, Math.ceil(seconds));
+}
+
+function extractChallengeFromError(errorLike) {
+  if (!errorLike || typeof errorLike !== "object") return null;
+  const data = errorLike.data;
+  if (!data || typeof data !== "object") return null;
+  if (!data.challengeRequired) return null;
+  const challengeToken =
+    typeof data.challengeToken === "string" ? data.challengeToken.trim() : "";
+  const challengePrompt =
+    typeof data.challengePrompt === "string" ? data.challengePrompt.trim() : "";
+  if (!challengeToken || !challengePrompt) return null;
+  return {
+    token: challengeToken,
+    prompt: challengePrompt,
+  };
+}
+
+function extractResetTokenFromLink(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    return String(
+      parsed.searchParams.get("resetToken") ||
+        parsed.searchParams.get("passwordResetToken") ||
+        ""
+    ).trim();
+  } catch {
+    return "";
+  }
 }
 
 function isErrorNoticeMessage(value) {
@@ -111,7 +144,16 @@ export default function App() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [accountEntryAuthMode, setAccountEntryAuthMode] = useState("signin");
   const [accountResetToken, setAccountResetToken] = useState("");
+  const [accountRecoveryCode, setAccountRecoveryCode] = useState("");
+  const [hasKnownAccount, setHasKnownAccount] = useState(() => {
+    try {
+      return localStorage.getItem(ACCOUNT_KNOWN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [showSplash, setShowSplash] = useState(true);
   const [splashLeaving, setSplashLeaving] = useState(false);
   const [compactMode, setCompactMode] = useState(() => {
@@ -187,6 +229,22 @@ export default function App() {
   const currentUndoToast = undoQueue[0] || null;
   const queuedUndoCount = Math.max(undoQueue.length - 1, 0);
   const noticeToastIsError = isErrorNoticeMessage(noticeToast);
+  const showAccountOnboardingNudge = !accountUser?.id && !hasKnownAccount;
+
+  const markAccountAsKnown = useCallback(() => {
+    setHasKnownAccount(true);
+    try {
+      localStorage.setItem(ACCOUNT_KNOWN_KEY, "1");
+    } catch {
+      // Ignore storage failures; in-memory state still hides onboarding nudge.
+    }
+  }, []);
+
+  const openAccountDialog = useCallback((mode = "signin") => {
+    const nextMode = String(mode || "").trim().toLowerCase() === "signup" ? "signup" : "signin";
+    setAccountEntryAuthMode(nextMode);
+    setAccountOpen(true);
+  }, []);
 
   const pushStorageWarning = useCallback((message) => {
     const now = Date.now();
@@ -514,11 +572,7 @@ export default function App() {
   useEffect(() => {
     try {
       const url = new URL(window.location.href);
-      const token = String(
-        url.searchParams.get("resetToken") ||
-          url.searchParams.get("passwordResetToken") ||
-          ""
-      ).trim();
+      const token = extractResetTokenFromLink(url.toString());
       if (!token) return;
 
       setAccountResetToken(token);
@@ -548,6 +602,7 @@ export default function App() {
         }
         if (result?.user) {
           setAccountUser(result.user || null);
+          markAccountAsKnown();
           setAccountSyncBusy(true);
           try {
             const remote = await pullAccountBackup();
@@ -587,7 +642,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [bills, notifyEnabled, replaceAllBills, setNotifyEnabled]);
+  }, [bills, notifyEnabled, replaceAllBills, setNotifyEnabled, markAccountAsKnown]);
 
   useEffect(() => {
     if (!accountUser?.id || !accountAutoSync) {
@@ -835,12 +890,22 @@ export default function App() {
       });
 
       setAccountUser(result?.user || null);
+      markAccountAsKnown();
       if (result?.storageMode) {
         setAccountStorageMode(result.storageMode);
       }
+      const recoveryCode =
+        typeof result?.recoveryCode === "string" ? result.recoveryCode.trim() : "";
+      if (recoveryCode) {
+        setAccountRecoveryCode(recoveryCode);
+      }
 
       await bootstrapAccountAfterSignIn({ silent: true });
-      setNoticeToast("Signed in.");
+      setNoticeToast(
+        recoveryCode
+          ? "Signed in. Save your new recovery code in Account settings."
+          : "Signed in."
+      );
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Sign in failed.";
@@ -863,7 +928,12 @@ export default function App() {
     }
   }
 
-  async function handleAccountSignupCreate({ email, password }) {
+  async function handleAccountSignupCreate({
+    email,
+    password,
+    challengeToken = "",
+    challengeAnswer = "",
+  }) {
     const cleanEmail = String(email || "").trim().toLowerCase();
     const cleanPassword = String(password || "");
     if (!cleanEmail || !cleanPassword) {
@@ -877,45 +947,103 @@ export default function App() {
       const result = await createAccount({
         email: cleanEmail,
         password: cleanPassword,
+        challengeToken: String(challengeToken || "").trim(),
+        challengeAnswer: String(challengeAnswer || "").trim(),
       });
 
       setAccountUser(result?.user || null);
+      markAccountAsKnown();
       if (result?.storageMode) {
         setAccountStorageMode(result.storageMode);
       }
+      const recoveryCode =
+        typeof result?.recoveryCode === "string" ? result.recoveryCode.trim() : "";
+      setAccountRecoveryCode(recoveryCode);
       await bootstrapAccountAfterSignIn({ silent: true });
-      setNoticeToast("Account created.");
+      setNoticeToast(
+        recoveryCode
+          ? "Account created. Save your recovery code in Account settings."
+          : "Account created."
+      );
       return { ok: true };
     } catch (error) {
-      setNoticeToast(error instanceof Error ? error.message : "Could not create account.");
+      const challenge = extractChallengeFromError(error);
+      const message = error instanceof Error ? error.message : "Could not create account.";
+      setNoticeToast(message);
+      if (challenge) {
+        return {
+          ok: false,
+          reason: "challenge-required",
+          challenge,
+          message,
+        };
+      }
       return { ok: false };
     } finally {
       setAccountBusy(false);
     }
   }
 
-  async function handleAccountResetStart(email) {
+  async function handleAccountRecoveryReset({
+    email,
+    recoveryCode,
+    password,
+    challengeToken = "",
+    challengeAnswer = "",
+  }) {
     const cleanEmail = String(email || "").trim().toLowerCase();
+    const cleanRecoveryCode = String(recoveryCode || "").trim();
+    const cleanPassword = String(password || "");
     if (!cleanEmail) {
-      setNoticeToast("Enter your email first.");
-      return { ok: false };
+      return { ok: false, message: "Enter your email first." };
     }
-    if (accountBusy) return { ok: false };
+    if (!cleanRecoveryCode) {
+      return { ok: false, message: "Enter your recovery code." };
+    }
+    if (!cleanPassword) {
+      return { ok: false, message: "Enter your new password." };
+    }
+    if (accountBusy) return { ok: false, message: "Please wait..." };
 
     setAccountBusy(true);
     try {
-      const result = await requestPasswordResetCode(cleanEmail);
-      setNoticeToast("If this email exists, a reset link was sent.");
+      const result = await completePasswordResetWithRecoveryCode({
+        email: cleanEmail,
+        recoveryCode: cleanRecoveryCode,
+        password: cleanPassword,
+        challengeToken: String(challengeToken || "").trim(),
+        challengeAnswer: String(challengeAnswer || "").trim(),
+      });
+      const nextStorageMode = String(result?.storageMode || "").trim();
+      if (nextStorageMode) {
+        setAccountStorageMode(nextStorageMode);
+      }
+      setAccountUser(result?.user || null);
+      markAccountAsKnown();
+      setAccountResetToken("");
+      await bootstrapAccountAfterSignIn({ silent: true });
+      setNoticeToast("Password reset complete.");
+
       return {
         ok: true,
-        debugResetLink:
-          typeof result?.debugResetLink === "string" ? result.debugResetLink : "",
+        tone: "success",
+        message: "Password reset complete. You are now signed in.",
       };
     } catch (error) {
-      setNoticeToast(
-        error instanceof Error ? error.message : "Could not send password reset link."
-      );
-      return { ok: false };
+      const challenge = extractChallengeFromError(error);
+      if (challenge) {
+        return {
+          ok: false,
+          reason: "challenge-required",
+          challenge,
+          message: error instanceof Error ? error.message : "Verification is required.",
+        };
+      }
+      return {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : "Could not reset password with recovery code.",
+      };
     } finally {
       setAccountBusy(false);
     }
@@ -938,6 +1066,7 @@ export default function App() {
       });
 
       setAccountUser(result?.user || null);
+      markAccountAsKnown();
       if (result?.storageMode) {
         setAccountStorageMode(result.storageMode);
       }
@@ -966,7 +1095,77 @@ export default function App() {
     } finally {
       setAccountBusy(false);
       setAccountUser(null);
+      setAccountRecoveryCode("");
       setNoticeToast("Signed out.");
+    }
+  }
+
+  async function handleAccountExport() {
+    if (!accountUser?.id || accountSyncBusy) return { ok: false, skipped: true };
+    setAccountSyncBusy(true);
+    try {
+      const remote = await pullAccountBackup();
+      if (remote?.storageMode) {
+        setAccountStorageMode(remote.storageMode);
+      }
+      const payload = remote?.payload || createBackupPayload({ bills, notifyEnabled });
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `bills-account-export-${stamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setNoticeToast("Account export downloaded.");
+      return { ok: true };
+    } catch (error) {
+      setNoticeToast(error instanceof Error ? error.message : "Could not export account data.");
+      return { ok: false };
+    } finally {
+      setAccountSyncBusy(false);
+    }
+  }
+
+  async function handleAccountDelete({ password }) {
+    const cleanPassword = String(password || "");
+    if (!cleanPassword) {
+      return { ok: false, message: "Enter your password to delete this account." };
+    }
+    if (accountBusy || accountSyncBusy) {
+      return { ok: false, message: "Please wait..." };
+    }
+
+    setAccountBusy(true);
+    try {
+      const result = await deleteAccount({ password: cleanPassword });
+      if (result?.storageMode) {
+        setAccountStorageMode(result.storageMode);
+      }
+      setAccountUser(null);
+      setAccountRecoveryCode("");
+      setLastAccountSyncAt("");
+      setHasKnownAccount(false);
+      setAccountEntryAuthMode("signin");
+      setAccountResetToken("");
+      setAccountOpen(false);
+      try {
+        localStorage.removeItem(ACCOUNT_KNOWN_KEY);
+        localStorage.removeItem(LAST_ACCOUNT_SYNC_AT_KEY);
+      } catch {
+        // Ignore storage failures and continue.
+      }
+      setNoticeToast("Account deleted.");
+      return { ok: true };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not delete this account.";
+      setNoticeToast(message);
+      return { ok: false, message };
+    } finally {
+      setAccountBusy(false);
     }
   }
 
@@ -1351,7 +1550,7 @@ export default function App() {
     <div className={`app ${compactMode ? "compactMode" : ""} density-${tableDensity}`}>
       <Header
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenAccount={() => setAccountOpen(true)}
+        onOpenAccount={() => openAccountDialog("signin")}
         accountSignedIn={Boolean(accountUser?.id)}
         onAdd={() => {
           setEditingId(null);
@@ -1416,7 +1615,7 @@ export default function App() {
           <AccountDialog
             onClose={() => {
               setAccountOpen(false);
-              setAccountResetToken("");
+              setAccountEntryAuthMode("signin");
               if (mobileTab === "account") {
                 setMobileTab("bills");
               }
@@ -1430,20 +1629,23 @@ export default function App() {
             accountAutoSync={accountAutoSync}
             setAccountAutoSync={setAccountAutoSync}
             lastAccountSyncAt={lastAccountSyncAt}
+            accountRecoveryCode={accountRecoveryCode}
+            onClearAccountRecoveryCode={() => setAccountRecoveryCode("")}
             passwordResetToken={accountResetToken}
             onClearPasswordResetToken={() => setAccountResetToken("")}
             onAuthModeChanged={() => setNoticeToast(null)}
+            initialAuthMode={accountEntryAuthMode}
             onAccountLogin={(email, password) =>
               handleAccountLoginSubmit({ email, password })
             }
-            onAccountSignupCreate={(email, password) =>
-              handleAccountSignupCreate({ email, password })
-            }
-            onAccountResetStart={handleAccountResetStart}
+            onAccountSignupCreate={handleAccountSignupCreate}
+            onAccountRecoveryReset={handleAccountRecoveryReset}
             onAccountResetVerify={({ token, password }) =>
               handleAccountResetVerify({ token, password })
             }
             onAccountLogout={handleAccountLogout}
+            onAccountExport={handleAccountExport}
+            onAccountDelete={handleAccountDelete}
             onAccountPull={async () => {
               await runWithActionLoading("account:pull", () =>
                 handleAccountPull({ silent: false })
@@ -1459,6 +1661,33 @@ export default function App() {
       ) : null}
 
       <div className="container">
+        {showAccountOnboardingNudge ? (
+          <section className="accountOnboardingNudge" aria-label="Account setup prompt">
+            <div className="accountOnboardingCopy">
+              <p className="accountOnboardingTitle">Create your account first</p>
+              <p className="accountOnboardingText">
+                Sign up to keep your bills synced and available across phone and web.
+              </p>
+            </div>
+            <div className="accountOnboardingActions">
+              <button
+                type="button"
+                className="btn headerBtn accountNudgePrimary"
+                onClick={() => openAccountDialog("signup")}
+              >
+                Create account
+              </button>
+              <button
+                type="button"
+                className="btn headerBtn accountNudgeSecondary"
+                onClick={() => openAccountDialog("signin")}
+              >
+                I already have one
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         <div ref={dueSoonRef}>
           <DueSoonBanner
             dueSoonBills={dueSoonList}
@@ -1647,7 +1876,7 @@ export default function App() {
             if (tab === "bills") scrollToRef(billsRef);
             if (tab === "due") scrollToRef(dueSoonRef);
             if (tab === "stats") scrollToRef(statsRef);
-            if (tab === "account") setAccountOpen(true);
+            if (tab === "account") openAccountDialog("signin");
           }}
         />
       ) : null}

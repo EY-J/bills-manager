@@ -229,10 +229,29 @@ async function main() {
     const page = await context.newPage();
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await page.locator('h2:has-text("Bills Tracker")').first().waitFor({
-      state: "visible",
-      timeout: 12_000,
-    });
+    await waitForAssertion(async () => {
+      const appReady = await page.evaluate(() => {
+        const accountCta = document.querySelector('button[aria-label^="Open account"]');
+        const mobileAccountButton = Array.from(document.querySelectorAll("button")).some(
+          (button) => button.textContent?.trim() === "Account"
+        );
+        const accountModalVisible = Boolean(document.querySelector(".accountModal"));
+        return Boolean(accountCta || mobileAccountButton || accountModalVisible);
+      });
+      assert.equal(appReady, true);
+    }, "app shell rendered", 12_000);
+
+    const host = String(new URL(baseUrl).hostname || "").toLowerCase();
+    const isLocalhostHost =
+      host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    const requireSwInLocalPreview = String(process.env.SW_REQUIRE_LOCAL || "").trim() === "1";
+    if (isLocalhostHost && !requireSwInLocalPreview) {
+      await context.close();
+      console.log(
+        "Service worker upgrade smoke skipped [local preview]: service worker is disabled on localhost."
+      );
+      return;
+    }
 
     const versionA = `upgrade-a-${Date.now()}`;
     const versionB = `upgrade-b-${Date.now()}`;

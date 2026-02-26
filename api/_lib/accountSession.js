@@ -59,9 +59,15 @@ export function verifyPassword(password, storedHash, storedSalt) {
 
 export function createSessionToken(user) {
   const now = Math.floor(Date.now() / 1000);
+  const rawSessionVersion = Number(user?.sessionVersion || 1);
+  const sessionVersion =
+    Number.isFinite(rawSessionVersion) && rawSessionVersion > 0
+      ? Math.floor(rawSessionVersion)
+      : 1;
   const payload = {
     uid: String(user?.id || ""),
     email: String(user?.email || ""),
+    sv: sessionVersion,
     iat: now,
     exp: now + SESSION_TTL_SECONDS,
   };
@@ -86,9 +92,15 @@ export function verifySessionToken(token) {
     if (typeof payload.uid !== "string" || payload.uid.length < 10) return null;
     if (typeof payload.email !== "string" || payload.email.length < 3) return null;
     if (!Number.isFinite(Number(payload.exp)) || Number(payload.exp) <= now) return null;
+    const rawSessionVersion = Number(payload.sv ?? 1);
+    const sessionVersion =
+      Number.isFinite(rawSessionVersion) && rawSessionVersion > 0
+        ? Math.floor(rawSessionVersion)
+        : 1;
     return {
       uid: payload.uid,
       email: payload.email,
+      sessionVersion,
       exp: Number(payload.exp),
     };
   } catch {
@@ -111,6 +123,19 @@ function shouldUseSecureCookie(req) {
   const proto = String(req?.headers?.["x-forwarded-proto"] || "").toLowerCase();
   if (proto === "https") return true;
   if (proto === "http") return false;
+  const host = String(req?.headers?.["x-forwarded-host"] || req?.headers?.host || "")
+    .toLowerCase()
+    .trim();
+  if (
+    host.startsWith("localhost:") ||
+    host === "localhost" ||
+    host.startsWith("127.0.0.1:") ||
+    host === "127.0.0.1" ||
+    host.startsWith("[::1]:") ||
+    host === "[::1]"
+  ) {
+    return false;
+  }
   return process.env.NODE_ENV === "production";
 }
 

@@ -48,11 +48,11 @@ function getPasswordPolicyStatus(password) {
   };
 }
 
-function getStorageModeLabel(mode) {
-  if (mode === "kv") return "Persistent cloud";
-  if (mode === "offline-local") return "This device only (offline)";
-  if (mode === "local") return "Local device server";
-  return "Local/dev mode";
+function normalizeAuthMode(mode) {
+  const value = String(mode || "").trim().toLowerCase();
+  if (value === "signup") return "signup";
+  if (value === "recover-password") return "recover-password";
+  return "signin";
 }
 
 export default function AccountDialog({
@@ -62,32 +62,52 @@ export default function AccountDialog({
   accountSyncBusy,
   accountPullBusy,
   accountPushBusy,
-  accountStorageMode,
   accountAutoSync,
   setAccountAutoSync,
   lastAccountSyncAt,
+  accountRecoveryCode,
+  onClearAccountRecoveryCode,
   passwordResetToken,
   onClearPasswordResetToken,
   onAuthModeChanged,
+  initialAuthMode,
   onAccountLogin,
   onAccountSignupCreate,
-  onAccountResetStart,
+  onAccountRecoveryReset,
   onAccountResetVerify,
   onAccountLogout,
+  onAccountExport,
+  onAccountDelete,
   onAccountPull,
   onAccountPush,
 }) {
-  const [authMode, setAuthMode] = useState("signin");
+  const [authMode, setAuthMode] = useState(() => normalizeAuthMode(initialAuthMode));
   const [accountEmailInput, setAccountEmailInput] = useState("");
+  const [accountRecoveryCodeInput, setAccountRecoveryCodeInput] = useState("");
   const [accountPasswordInput, setAccountPasswordInput] = useState("");
   const [passwordConfirmInput, setPasswordConfirmInput] = useState("");
   const [showPasswordInput, setShowPasswordInput] = useState(false);
   const [showPasswordConfirmInput, setShowPasswordConfirmInput] = useState(false);
   const [loginErrorKind, setLoginErrorKind] = useState("");
   const [loginCooldownSeconds, setLoginCooldownSeconds] = useState(0);
+  const [recoveryFeedbackMessage, setRecoveryFeedbackMessage] = useState("");
+  const [recoveryFeedbackTone, setRecoveryFeedbackTone] = useState("");
+  const [signupChallenge, setSignupChallenge] = useState(null);
+  const [signupChallengeAnswer, setSignupChallengeAnswer] = useState("");
+  const [recoveryChallenge, setRecoveryChallenge] = useState(null);
+  const [recoveryChallengeAnswer, setRecoveryChallengeAnswer] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [accountDeletePasswordInput, setAccountDeletePasswordInput] = useState("");
+  const [accountDeleteFeedback, setAccountDeleteFeedback] = useState("");
+  const [showDeletePasswordInput, setShowDeletePasswordInput] = useState(false);
+  const [recoveryCodeCopied, setRecoveryCodeCopied] = useState(false);
   const emailInputRef = useRef(null);
+  const recoveryCodeInputRef = useRef(null);
   const passwordInputRef = useRef(null);
   const passwordConfirmInputRef = useRef(null);
+  const signupChallengeInputRef = useRef(null);
+  const recoveryChallengeInputRef = useRef(null);
+  const deletePasswordInputRef = useRef(null);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -115,30 +135,47 @@ export default function AccountDialog({
   const hasPasswordResetToken = Boolean(String(passwordResetToken || "").trim());
   const effectiveAuthMode = hasPasswordResetToken ? "reset-password" : authMode;
   const isCreateAccountMode = effectiveAuthMode === "signup";
-  const isResetRequestMode = effectiveAuthMode === "reset-request";
+  const isRecoverPasswordMode = effectiveAuthMode === "recover-password";
   const isResetPasswordMode = effectiveAuthMode === "reset-password";
   const isSignInMode = effectiveAuthMode === "signin";
 
   const normalizedEmail = String(accountEmailInput || "").trim().toLowerCase();
+  const normalizedRecoveryCode = String(accountRecoveryCodeInput || "")
+    .replace(/\D+/g, "")
+    .slice(0, 12);
   const passwordValue = String(accountPasswordInput || "");
   const passwordConfirmValue = String(passwordConfirmInput || "");
   const passwordPolicy = getPasswordPolicyStatus(passwordValue);
   const passwordsMatch = passwordValue.length > 0 && passwordValue === passwordConfirmValue;
   const showSignupPasswordStrength =
-    (isCreateAccountMode || isResetPasswordMode) && passwordValue.length > 0;
+    (isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode) &&
+    passwordValue.length > 0;
   const showSignupPasswordRules =
-    (isCreateAccountMode || isResetPasswordMode) &&
+    (isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode) &&
     passwordValue.length > 0 &&
     !passwordPolicy.isValid;
   const signupPasswordStrength = getPasswordStrength(passwordValue);
 
   const canSignIn = Boolean(normalizedEmail) && Boolean(passwordValue);
-  const canStartSignup = Boolean(normalizedEmail) && passwordPolicy.isValid && passwordsMatch;
-  const canSendPasswordResetLink = Boolean(normalizedEmail);
+  const signupChallengeRequired =
+    isCreateAccountMode && Boolean(String(signupChallenge?.token || "").trim());
+  const recoveryChallengeRequired =
+    isRecoverPasswordMode && Boolean(String(recoveryChallenge?.token || "").trim());
+  const canStartSignup =
+    Boolean(normalizedEmail) &&
+    passwordPolicy.isValid &&
+    passwordsMatch &&
+    (!signupChallengeRequired || Boolean(String(signupChallengeAnswer || "").trim()));
+  const canRecoverPassword =
+    Boolean(normalizedEmail) &&
+    normalizedRecoveryCode.length === 12 &&
+    passwordPolicy.isValid &&
+    passwordsMatch &&
+    (!recoveryChallengeRequired || Boolean(String(recoveryChallengeAnswer || "").trim()));
   const canCompletePasswordReset =
     Boolean(String(passwordResetToken || "").trim()) && passwordPolicy.isValid && passwordsMatch;
   const showPasswordConfirmMismatch =
-    (isCreateAccountMode || isResetPasswordMode) &&
+    (isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode) &&
     passwordConfirmValue.length > 0 &&
     !passwordsMatch;
   const hasInvalidCredentialsError = loginErrorKind === "invalid-credentials";
@@ -153,6 +190,7 @@ export default function AccountDialog({
   const isPullBusy = Boolean(accountPullBusy);
   const isPushBusy = Boolean(accountPushBusy);
   const isManualSyncBusy = isPullBusy || isPushBusy;
+  const canConfirmDeleteAccount = Boolean(String(accountDeletePasswordInput || ""));
 
   function focusInput(ref) {
     const node = ref?.current;
@@ -165,10 +203,22 @@ export default function AccountDialog({
 
   function resetAuthTransientState() {
     setAccountPasswordInput("");
+    setAccountRecoveryCodeInput("");
     setPasswordConfirmInput("");
     setShowPasswordInput(false);
     setShowPasswordConfirmInput(false);
     setLoginErrorKind("");
+    setRecoveryFeedbackMessage("");
+    setRecoveryFeedbackTone("");
+    setSignupChallenge(null);
+    setSignupChallengeAnswer("");
+    setRecoveryChallenge(null);
+    setRecoveryChallengeAnswer("");
+    setDeleteConfirmOpen(false);
+    setAccountDeletePasswordInput("");
+    setAccountDeleteFeedback("");
+    setShowDeletePasswordInput(false);
+    setRecoveryCodeCopied(false);
   }
 
   function handleAuthModeChange(nextMode) {
@@ -233,19 +283,79 @@ export default function AccountDialog({
     }
     if (!canStartSignup) return;
     const password = String(accountPasswordInput || "");
-    const result = await onAccountSignupCreate?.(email, password);
+    const result = await onAccountSignupCreate?.({
+      email,
+      password,
+      challengeToken: String(signupChallenge?.token || ""),
+      challengeAnswer: String(signupChallengeAnswer || ""),
+    });
     if (result?.ok) {
       resetAuthTransientState();
+      return;
+    }
+    if (result?.reason === "challenge-required" && result?.challenge) {
+      setSignupChallenge(result.challenge);
+      setSignupChallengeAnswer("");
+      window.setTimeout(() => {
+        focusInput(signupChallengeInputRef);
+      }, 0);
     }
   }
 
-  async function handleSendPasswordResetLinkClick() {
+  async function handleRecoverPasswordClick() {
     const email = normalizedEmail;
-    if (!email || !canSendPasswordResetLink) {
+    if (!email) {
       focusInput(emailInputRef);
       return;
     }
-    await onAccountResetStart?.(email);
+    if (normalizedRecoveryCode.length !== 12) {
+      focusInput(recoveryCodeInputRef);
+      return;
+    }
+    if (!passwordPolicy.isValid) {
+      focusInput(passwordInputRef);
+      return;
+    }
+    if (!passwordsMatch) {
+      focusInput(passwordConfirmInputRef);
+      return;
+    }
+    if (!canRecoverPassword) return;
+    setRecoveryFeedbackMessage("");
+    setRecoveryFeedbackTone("");
+    const result = await onAccountRecoveryReset?.({
+      email,
+      recoveryCode: normalizedRecoveryCode,
+      password: passwordValue,
+      challengeToken: String(recoveryChallenge?.token || ""),
+      challengeAnswer: String(recoveryChallengeAnswer || ""),
+    });
+    if (result?.ok) {
+      resetAuthTransientState();
+      setAuthMode("signin");
+      return;
+    }
+    if (result?.reason === "challenge-required" && result?.challenge) {
+      setRecoveryChallenge(result.challenge);
+      setRecoveryChallengeAnswer("");
+      const challengeMessage =
+        typeof result?.message === "string" && result.message.trim()
+          ? result.message.trim()
+          : "Please complete the quick check and try again.";
+      setRecoveryFeedbackMessage(challengeMessage);
+      setRecoveryFeedbackTone("error");
+      window.setTimeout(() => {
+        focusInput(recoveryChallengeInputRef);
+      }, 0);
+      return;
+    }
+
+    const failedMessage =
+      typeof result?.message === "string" && result.message.trim()
+        ? result.message.trim()
+        : "Could not reset password. Please try again.";
+    setRecoveryFeedbackMessage(failedMessage);
+    setRecoveryFeedbackTone("error");
   }
 
   async function handleCompletePasswordResetClick() {
@@ -272,7 +382,58 @@ export default function AccountDialog({
     }
   }
 
-  const showAuthModePills = !isResetRequestMode && !isResetPasswordMode;
+  async function handleCopyRecoveryCodeClick() {
+    const value = String(accountRecoveryCode || "").trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setRecoveryCodeCopied(true);
+    } catch {
+      setRecoveryCodeCopied(false);
+    }
+  }
+
+  async function handleDeleteAccountClick() {
+    const password = String(accountDeletePasswordInput || "");
+    if (!password) {
+      focusInput(deletePasswordInputRef);
+      return;
+    }
+    setAccountDeleteFeedback("");
+    const result = await onAccountDelete?.({ password });
+    if (result?.ok) {
+      setDeleteConfirmOpen(false);
+      setAccountDeletePasswordInput("");
+      setShowDeletePasswordInput(false);
+      return;
+    }
+    if (typeof result?.message === "string" && result.message.trim()) {
+      setAccountDeleteFeedback(result.message.trim());
+    } else {
+      setAccountDeleteFeedback("Could not delete account. Please try again.");
+    }
+  }
+
+  const authFormTitle = isCreateAccountMode
+    ? "Create account"
+    : isRecoverPasswordMode
+      ? "Recover password"
+      : isResetPasswordMode
+        ? "Set new password"
+        : "Sign in";
+
+  const authFormHint = isCreateAccountMode
+    ? "Create your account to sync bills."
+    : isRecoverPasswordMode
+      ? "Use your recovery code to reset your password."
+      : isResetPasswordMode
+        ? "Set your new password to continue."
+        : "Use email and password to sign in.";
+
+  const headerTitle = accountUser?.email ? "Account" : authFormTitle;
+  const headerSubtitle = accountUser?.email
+    ? "Manage sync across phone and web."
+    : authFormHint;
 
   return (
     <div className="modalBackdrop" onMouseDown={onClose}>
@@ -282,8 +443,8 @@ export default function AccountDialog({
       >
         <div className="modalHeader">
           <div>
-            <h3>Account</h3>
-            <p className="muted">Sign in to sync bills across phone and web.</p>
+            <h3>{headerTitle}</h3>
+            <p className="muted">{headerSubtitle}</p>
           </div>
           <button className="iconBtn" onClick={onClose} aria-label="Close account">
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -304,6 +465,40 @@ export default function AccountDialog({
                     <span className="settingsHint settingsAccountEmail">{accountUser.email}</span>
                   </div>
                 </div>
+
+                {String(accountRecoveryCode || "").trim() ? (
+                  <div className="settingsRow settingsRowStack accountRecoveryRow">
+                    <div className="settingsMeta">
+                      <span className="settingsLabel">Recovery code</span>
+                      <span className="settingsHint">
+                        Save this code. You can reset your password with it.
+                      </span>
+                    </div>
+                    <div className="accountRecoveryCodeValue">
+                      {String(accountRecoveryCode || "").trim()}
+                    </div>
+                    <div className="accountAssistRow accountAssistRowInfo">
+                      <button
+                        type="button"
+                        className="accountAssistBtn"
+                        disabled={accountBusy || accountSyncBusy}
+                        onClick={async () => {
+                          await handleCopyRecoveryCodeClick();
+                        }}
+                      >
+                        {recoveryCodeCopied ? "Copied" : "Copy code"}
+                      </button>
+                      <button
+                        type="button"
+                        className="accountAssistBtn"
+                        disabled={accountBusy || accountSyncBusy}
+                        onClick={() => onClearAccountRecoveryCode?.()}
+                      >
+                        I saved it
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="settingsRow">
                   <div className="settingsMeta">
@@ -351,12 +546,12 @@ export default function AccountDialog({
                         >
                           <path d="M21 12a9 9 0 1 1-2.6-6.4" />
                         </svg>
-                        Pulling...
+                        Loading...
                       </span>
                     ) : accountSyncBusy ? (
-                      "Syncing..."
+                      "Updating..."
                     ) : (
-                      "Pull now"
+                      "Load from cloud"
                     )}
                   </button>
 
@@ -383,12 +578,12 @@ export default function AccountDialog({
                         >
                           <path d="M21 12a9 9 0 1 1-2.6-6.4" />
                         </svg>
-                        Pushing...
+                        Saving...
                       </span>
                     ) : accountSyncBusy ? (
-                      "Syncing..."
+                      "Updating..."
                     ) : (
-                      "Push now"
+                      "Save to cloud"
                     )}
                   </button>
 
@@ -402,37 +597,94 @@ export default function AccountDialog({
                     Sign out
                   </button>
                 </div>
+
+                <div className="settingsActions settingsDataActions accountDataActions">
+                  <button
+                    className="btn headerBtn settingsActionSecondary"
+                    disabled={accountBusy || accountSyncBusy || isManualSyncBusy}
+                    onClick={async () => {
+                      await onAccountExport?.();
+                    }}
+                  >
+                    Export account data
+                  </button>
+                  <button
+                    type="button"
+                    className="btn headerBtn settingsActionDanger"
+                    disabled={accountBusy || accountSyncBusy || isManualSyncBusy}
+                    onClick={() => {
+                      setDeleteConfirmOpen((open) => !open);
+                      setAccountDeleteFeedback("");
+                      setShowDeletePasswordInput(false);
+                    }}
+                  >
+                    {deleteConfirmOpen ? "Cancel delete" : "Delete account"}
+                  </button>
+                </div>
+
+                {deleteConfirmOpen ? (
+                  <div className="settingsRow settingsRowStack">
+                    <div className="settingsMeta">
+                      <span className="settingsLabel">Confirm account deletion</span>
+                      <span className="settingsHint">
+                        Enter your password. This permanently removes your account and cloud data.
+                      </span>
+                    </div>
+                    <div className="settingsPasswordField">
+                      <input
+                        ref={deletePasswordInputRef}
+                        className="input settingsAuthInput settingsPasswordInput"
+                        type={showDeletePasswordInput ? "text" : "password"}
+                        autoComplete="current-password"
+                        aria-label="Confirm account deletion password"
+                        value={accountDeletePasswordInput}
+                        onChange={(e) => {
+                          setAccountDeletePasswordInput(e.target.value);
+                          if (accountDeleteFeedback) setAccountDeleteFeedback("");
+                        }}
+                        placeholder="Enter current password"
+                        maxLength={128}
+                      />
+                      <button
+                        type="button"
+                        className="settingsPasswordToggleBtn"
+                        onClick={() => setShowDeletePasswordInput((v) => !v)}
+                        aria-label={showDeletePasswordInput ? "Hide password" : "Show password"}
+                        aria-pressed={showDeletePasswordInput}
+                      >
+                        {showDeletePasswordInput ? (
+                          <EyeOff aria-hidden="true" focusable="false" />
+                        ) : (
+                          <Eye aria-hidden="true" focusable="false" />
+                        )}
+                      </button>
+                    </div>
+                    <div className="settingsActions settingsDataActions accountDataActions is-single">
+                      <button
+                        type="button"
+                        className="btn headerBtn settingsActionDanger"
+                        disabled={!canConfirmDeleteAccount || accountBusy || accountSyncBusy}
+                        onClick={async () => {
+                          await handleDeleteAccountClick();
+                        }}
+                      >
+                        {accountBusy ? "Please wait..." : "Delete permanently"}
+                      </button>
+                    </div>
+                    <div
+                      className={`accountAuthLiveRegion ${accountDeleteFeedback ? "is-error" : ""}`.trim()}
+                      role="status"
+                      aria-live="polite"
+                      aria-atomic="true"
+                    >
+                      {accountDeleteFeedback}
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : (
               <>
-                {showAuthModePills ? (
-                  <div
-                    className="settingsPills accountAuthModeToggle"
-                    role="tablist"
-                    aria-label="Account mode"
-                  >
-                    <button
-                      type="button"
-                      className={`settingsPill settingsPillSignIn ${isSignInMode ? "active" : ""}`}
-                      onClick={() => handleAuthModeChange("signin")}
-                      disabled={accountBusy || accountSyncBusy}
-                      aria-selected={isSignInMode}
-                    >
-                      Sign in
-                    </button>
-                    <button
-                      type="button"
-                      className={`settingsPill settingsPillCreate ${isCreateAccountMode ? "active" : ""}`}
-                      onClick={() => handleAuthModeChange("signup")}
-                      disabled={accountBusy || accountSyncBusy}
-                      aria-selected={isCreateAccountMode}
-                    >
-                      Create account
-                    </button>
-                  </div>
-                ) : null}
-
-                {isSignInMode || isCreateAccountMode || isResetRequestMode ? (
+                {isSignInMode || isCreateAccountMode || isRecoverPasswordMode ? (
                   <div className="settingsRow settingsRowStack">
                     <div className="settingsMeta">
                       <span className="settingsLabel">Email</span>
@@ -455,11 +707,11 @@ export default function AccountDialog({
                   </div>
                 ) : null}
 
-                {isSignInMode || isCreateAccountMode || isResetPasswordMode ? (
+                {isSignInMode || isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode ? (
                   <div className="settingsRow settingsRowStack">
                     <div className="settingsMeta">
                       <span className="settingsLabel">
-                        {isResetPasswordMode ? "New password" : "Password"}
+                        {isResetPasswordMode || isRecoverPasswordMode ? "New password" : "Password"}
                       </span>
                     </div>
                     <div
@@ -472,18 +724,26 @@ export default function AccountDialog({
                         }`.trim()}
                         type={showPasswordInput ? "text" : "password"}
                         autoComplete={
-                          isCreateAccountMode || isResetPasswordMode
+                          isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode
                             ? "new-password"
                             : "current-password"
                         }
-                        aria-label={isResetPasswordMode ? "New password" : "Password"}
+                        aria-label={
+                          isResetPasswordMode || isRecoverPasswordMode
+                            ? "New password"
+                            : "Password"
+                        }
                         aria-invalid={showSignInPasswordError ? "true" : undefined}
                         value={accountPasswordInput}
                         onChange={(e) => {
                           setAccountPasswordInput(e.target.value);
                           if (loginErrorKind) setLoginErrorKind("");
                         }}
-                        placeholder={isResetPasswordMode ? "Enter new password" : "Enter password"}
+                        placeholder={
+                          isResetPasswordMode || isRecoverPasswordMode
+                            ? "Enter new password"
+                            : "Enter password"
+                        }
                         maxLength={128}
                       />
                       <button
@@ -516,11 +776,37 @@ export default function AccountDialog({
                   </div>
                 ) : null}
 
-                {isCreateAccountMode || isResetPasswordMode ? (
+                {isRecoverPasswordMode ? (
+                  <div className="settingsRow settingsRowStack">
+                    <div className="settingsMeta">
+                      <span className="settingsLabel">Recovery code</span>
+                    </div>
+                    <input
+                      ref={recoveryCodeInputRef}
+                      className="input settingsAuthInput"
+                      type="text"
+                      autoComplete="one-time-code"
+                      inputMode="numeric"
+                      aria-label="Recovery code"
+                      value={accountRecoveryCodeInput}
+                      onChange={(e) => {
+                        const digits = String(e.target.value || "").replace(/\D+/g, "").slice(0, 12);
+                        const grouped = digits.replace(/(\d{4})(?=\d)/g, "$1-");
+                        setAccountRecoveryCodeInput(grouped);
+                      }}
+                      placeholder="0000-0000-0000"
+                      maxLength={14}
+                    />
+                  </div>
+                ) : null}
+
+                {isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode ? (
                   <div className="settingsRow settingsRowStack">
                     <div className="settingsMeta">
                       <span className="settingsLabel">
-                        {isResetPasswordMode ? "Re-enter new password" : "Re-enter password"}
+                        {isResetPasswordMode || isRecoverPasswordMode
+                          ? "Re-enter new password"
+                          : "Re-enter password"}
                       </span>
                     </div>
                     <div
@@ -534,13 +820,17 @@ export default function AccountDialog({
                         type={showPasswordConfirmInput ? "text" : "password"}
                         autoComplete="new-password"
                         aria-label={
-                          isResetPasswordMode ? "Re-enter new password" : "Re-enter password"
+                          isResetPasswordMode || isRecoverPasswordMode
+                            ? "Re-enter new password"
+                            : "Re-enter password"
                         }
                         aria-invalid={showPasswordConfirmMismatch ? "true" : undefined}
                         value={passwordConfirmInput}
                         onChange={(e) => setPasswordConfirmInput(e.target.value)}
                         placeholder={
-                          isResetPasswordMode ? "Re-enter new password" : "Re-enter password"
+                          isResetPasswordMode || isRecoverPasswordMode
+                            ? "Re-enter new password"
+                            : "Re-enter password"
                         }
                         maxLength={128}
                       />
@@ -566,33 +856,105 @@ export default function AccountDialog({
                 ) : null}
 
                 {isCreateAccountMode ? (
-                  <div className="settingsActions settingsDataActions accountDataActions is-single">
-                    <button
-                      type="button"
-                      className="btn headerBtn settingsActionPrimary"
-                      disabled={accountBusy || accountSyncBusy || !canStartSignup}
-                      onClick={async () => {
-                        await handleCreateAccountClick();
-                      }}
-                    >
-                      {accountBusy ? "Please wait..." : "Create account"}
-                    </button>
-                  </div>
+                  <>
+                    {signupChallengeRequired ? (
+                      <div className="settingsRow settingsRowStack">
+                        <div className="settingsMeta">
+                          <span className="settingsLabel">Quick verification</span>
+                          <span className="settingsHint">{String(signupChallenge?.prompt || "")}</span>
+                        </div>
+                        <input
+                          ref={signupChallengeInputRef}
+                          className="input settingsAuthInput"
+                          type="text"
+                          autoComplete="off"
+                          aria-label="Quick verification answer"
+                          value={signupChallengeAnswer}
+                          onChange={(e) => setSignupChallengeAnswer(e.target.value)}
+                          placeholder="Enter answer"
+                          maxLength={32}
+                        />
+                      </div>
+                    ) : null}
+
+                    <div className="settingsActions settingsDataActions accountDataActions is-single">
+                      <button
+                        type="button"
+                        className="btn headerBtn settingsActionPrimary accountCreateActionBtn"
+                        disabled={accountBusy || accountSyncBusy || !canStartSignup}
+                        onClick={async () => {
+                          await handleCreateAccountClick();
+                        }}
+                      >
+                        {accountBusy ? "Please wait..." : "Create account"}
+                      </button>
+                    </div>
+                    <div className="accountAssistRow accountAssistRowInfo accountRecoveryInfo">
+                      <span className="accountAssistHint accountRecoveryInfoText">
+                        Recovery code will appear after account creation. Save it safely.
+                      </span>
+                    </div>
+
+                    <div className="accountAssistRow accountAssistRowInfo accountAuthLinksRow">
+                      <span className="accountAssistHint">Already have an account?</span>
+                      <button
+                        type="button"
+                        className="accountAssistBtn accountAssistCreateBtn"
+                        disabled={accountBusy || accountSyncBusy}
+                        onClick={() => handleAuthModeChange("signin")}
+                      >
+                        Sign in
+                      </button>
+                    </div>
+                  </>
                 ) : null}
 
-                {isResetRequestMode ? (
+                {isRecoverPasswordMode ? (
                   <>
+                    {recoveryChallengeRequired ? (
+                      <div className="settingsRow settingsRowStack">
+                        <div className="settingsMeta">
+                          <span className="settingsLabel">Quick verification</span>
+                          <span className="settingsHint">
+                            {String(recoveryChallenge?.prompt || "")}
+                          </span>
+                        </div>
+                        <input
+                          ref={recoveryChallengeInputRef}
+                          className="input settingsAuthInput"
+                          type="text"
+                          autoComplete="off"
+                          aria-label="Quick verification answer"
+                          value={recoveryChallengeAnswer}
+                          onChange={(e) => setRecoveryChallengeAnswer(e.target.value)}
+                          placeholder="Enter answer"
+                          maxLength={32}
+                        />
+                      </div>
+                    ) : null}
+
                     <div className="settingsActions settingsDataActions accountDataActions is-single">
                       <button
                         type="button"
                         className="btn headerBtn settingsActionPrimary"
-                        disabled={accountBusy || accountSyncBusy || !canSendPasswordResetLink}
+                        disabled={accountBusy || accountSyncBusy || !canRecoverPassword}
                         onClick={async () => {
-                          await handleSendPasswordResetLinkClick();
+                          await handleRecoverPasswordClick();
                         }}
                       >
-                        {accountBusy ? "Please wait..." : "Send reset link"}
+                        {accountBusy ? "Please wait..." : "Reset password"}
                       </button>
+                    </div>
+
+                    <div
+                      className={`accountAuthLiveRegion ${
+                        recoveryFeedbackTone ? `is-${recoveryFeedbackTone}` : ""
+                      }`.trim()}
+                      role="status"
+                      aria-live="polite"
+                      aria-atomic="true"
+                    >
+                      {recoveryFeedbackMessage}
                     </div>
 
                     <div className="accountAssistRow">
@@ -670,8 +1032,16 @@ export default function AccountDialog({
                       {authLiveMessage}
                     </div>
 
-                    {hasInvalidCredentialsError ? (
-                      <div className="accountAssistRow accountAssistRowInfo">
+                    <div className="accountAssistRow accountAuthSplitLinks">
+                      <button
+                        type="button"
+                        className="accountAssistBtn accountAssistBtnMuted"
+                        disabled={accountBusy || accountSyncBusy}
+                        onClick={() => handleAuthModeChange("recover-password")}
+                      >
+                        Forgot password
+                      </button>
+                      <div className="accountAuthCreateInline">
                         <span className="accountAssistHint">No account yet?</span>
                         <button
                           type="button"
@@ -679,20 +1049,9 @@ export default function AccountDialog({
                           disabled={accountBusy || accountSyncBusy}
                           onClick={() => handleAuthModeChange("signup")}
                         >
-                          Create account
+                          Create one
                         </button>
                       </div>
-                    ) : null}
-
-                    <div className="accountAssistRow">
-                      <button
-                        type="button"
-                        className="accountAssistBtn"
-                        disabled={accountBusy || accountSyncBusy}
-                        onClick={() => handleAuthModeChange("reset-request")}
-                      >
-                        Forgot password?
-                      </button>
                     </div>
                   </>
                 ) : null}
@@ -701,9 +1060,6 @@ export default function AccountDialog({
 
             {accountUser?.email ? (
               <div className="accountStatusFooter" role="status" aria-live="polite">
-                <span className="settingsAccountStatusHint">
-                  Sync storage: {getStorageModeLabel(accountStorageMode)}
-                </span>
                 <span className="accountStatusSyncMeta">
                   <span className="settingsDataStatusInlineLabel">Last sync:</span>
                   <strong
@@ -715,11 +1071,7 @@ export default function AccountDialog({
                   </strong>
                 </span>
               </div>
-            ) : (
-              <div className="settingsAccountStatusHint">
-                Sync storage: {getStorageModeLabel(accountStorageMode)}
-              </div>
-            )}
+            ) : null}
           </section>
         </div>
       </div>

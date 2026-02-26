@@ -1,23 +1,10 @@
-import {
-  cacheOfflineAccountCredential,
-  cacheOfflineSessionUser,
-  clearOfflineAccountSession,
-  completeOfflinePasswordReset,
-  createOfflineAccount,
-  getOfflineAccountSession,
-  loginOfflineAccount,
-  logoutOfflineAccount,
-  pullOfflineBackup,
-  pushOfflineBackup,
-  requestOfflinePasswordResetLink,
-} from "./offlineAccountStore.js";
-
 function messageFromStatus(status) {
   if (status === 401) return "Invalid email or password.";
   if (status === 409) return "Email is already registered.";
+  if (status === 428) return "Additional verification is required.";
   if (status === 429) return "Too many requests. Please try again soon.";
   if (status >= 500) return "Server error. Please try again.";
-  if (status === 404) return "Account service is unavailable. Please try again.";
+  if (status === 404) return "Account setup is not ready yet. Please restart the app and try again.";
   return "Request failed.";
 }
 
@@ -102,49 +89,21 @@ async function requestJson(url, options = {}) {
       );
       rateLimitError.status = 429;
       rateLimitError.retryAfterSeconds = retryAfterSeconds;
+      rateLimitError.data = payload;
       throw rateLimitError;
     }
     const requestError = new Error(serverMessage || messageFromStatus(response.status));
     requestError.status = response.status;
+    requestError.data = payload;
     throw requestError;
   }
   return payload;
 }
 
-function shouldUseOfflineFallback(error) {
-  if (!error || typeof error !== "object") return false;
-  if (error.isNetworkError) return true;
-  const status = Number(error.status || 0);
-  if (!Number.isFinite(status)) return false;
-  return status === 0 || status === 404 || status === 502 || status === 503 || status === 504;
-}
-
-async function cacheOfflineCredentialBestEffort({ email, password, user }) {
-  try {
-    await cacheOfflineAccountCredential({ email, password, user });
-    if (user?.id && user?.email) {
-      cacheOfflineSessionUser(user);
-    }
-  } catch {
-    // Do not block online auth if offline cache write fails.
-  }
-}
-
 export async function getAccountSession() {
-  try {
-    const result = await requestJson("/api/account-auth", {
-      method: "GET",
-    });
-    if (result?.user?.id && result?.user?.email) {
-      cacheOfflineSessionUser(result.user);
-    } else {
-      clearOfflineAccountSession();
-    }
-    return result;
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return getOfflineAccountSession();
-  }
+  return requestJson("/api/account-auth", {
+    method: "GET",
+  });
 }
 
 export async function requestSignupCode(email) {
@@ -169,112 +128,97 @@ export async function completeSignup({ email, password, code }) {
   });
 }
 
-export async function createAccount({ email, password }) {
-  try {
-    const result = await requestJson("/api/account-auth", {
-      method: "POST",
-      body: JSON.stringify({
-        action: "signup",
-        email,
-        password,
-      }),
-    });
-    await cacheOfflineCredentialBestEffort({ email, password, user: result?.user });
-    return result;
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return createOfflineAccount({ email, password });
-  }
+export async function createAccount({ email, password, challengeToken = "", challengeAnswer = "" }) {
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "signup",
+      email,
+      password,
+      challengeToken,
+      challengeAnswer,
+    }),
+  });
 }
 
 export async function requestPasswordResetCode(email) {
-  try {
-    return await requestJson("/api/account-auth", {
-      method: "POST",
-      body: JSON.stringify({
-        action: "request-password-reset-link",
-        email,
-      }),
-    });
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return requestOfflinePasswordResetLink(email);
-  }
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "request-password-reset-link",
+      email,
+    }),
+  });
 }
 
 export async function completePasswordReset({ token, password }) {
-  try {
-    const result = await requestJson("/api/account-auth", {
-      method: "POST",
-      body: JSON.stringify({
-        action: "complete-password-reset",
-        token,
-        password,
-      }),
-    });
-    await cacheOfflineCredentialBestEffort({
-      email: result?.user?.email,
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "complete-password-reset",
+      token,
       password,
-      user: result?.user,
-    });
-    return result;
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return completeOfflinePasswordReset({ token, password });
-  }
+    }),
+  });
+}
+
+export async function completePasswordResetWithRecoveryCode({
+  email,
+  recoveryCode,
+  password,
+  challengeToken = "",
+  challengeAnswer = "",
+}) {
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "complete-password-reset-recovery",
+      email,
+      recoveryCode,
+      password,
+      challengeToken,
+      challengeAnswer,
+    }),
+  });
 }
 
 export async function loginAccount({ email, password }) {
-  try {
-    const result = await requestJson("/api/account-auth", {
-      method: "POST",
-      body: JSON.stringify({
-        action: "login",
-        email,
-        password,
-      }),
-    });
-    await cacheOfflineCredentialBestEffort({ email, password, user: result?.user });
-    return result;
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return loginOfflineAccount({ email, password });
-  }
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "login",
+      email,
+      password,
+    }),
+  });
 }
 
 export async function logoutAccount() {
-  try {
-    const result = await requestJson("/api/account-auth", {
-      method: "POST",
-      body: JSON.stringify({ action: "logout" }),
-    });
-    clearOfflineAccountSession();
-    return result;
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return logoutOfflineAccount();
-  }
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({ action: "logout" }),
+  });
+}
+
+export async function deleteAccount({ password }) {
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "delete-account",
+      password,
+    }),
+  });
 }
 
 export async function pullAccountBackup() {
-  try {
-    return await requestJson("/api/account-sync", {
-      method: "GET",
-    });
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return pullOfflineBackup();
-  }
+  return requestJson("/api/account-sync", {
+    method: "GET",
+  });
 }
 
 export async function pushAccountBackup(payload) {
-  try {
-    return await requestJson("/api/account-sync", {
-      method: "PUT",
-      body: JSON.stringify({ payload }),
-    });
-  } catch (error) {
-    if (!shouldUseOfflineFallback(error)) throw error;
-    return pushOfflineBackup(payload);
-  }
+  return requestJson("/api/account-sync", {
+    method: "PUT",
+    body: JSON.stringify({ payload }),
+  });
 }

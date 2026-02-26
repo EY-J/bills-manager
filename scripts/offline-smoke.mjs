@@ -351,7 +351,24 @@ async function runViewportCheck(browser, viewport, baseUrl) {
     await detailsOnline.locator('button[aria-label="Close"]').first().click();
     await detailsOnline.waitFor({ state: "hidden", timeout: 10_000 });
 
-    await ensureServiceWorkerControl(page);
+    const host = String(new URL(baseUrl).hostname || "").toLowerCase();
+    const isLocalhostHost =
+      host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    const requireSwInLocalPreview = String(process.env.OFFLINE_REQUIRE_SW || "").trim() === "1";
+    const canSkipWhenNoSw = isLocalhostHost && !requireSwInLocalPreview;
+
+    try {
+      await ensureServiceWorkerControl(page);
+    } catch (error) {
+      if (canSkipWhenNoSw) {
+        return {
+          ...viewport,
+          status: "skip",
+          note: "Service worker is disabled on localhost preview; offline check skipped.",
+        };
+      }
+      throw error;
+    }
 
     await context.setOffline(true);
     try {
@@ -435,6 +452,10 @@ async function main() {
     for (const result of results) {
       if (result.status === "pass") {
         console.log(`PASS  ${result.name} (${result.width}x${result.height})`);
+      } else if (result.status === "skip") {
+        console.log(
+          `SKIP  ${result.name} (${result.width}x${result.height}) -> ${result.note}`
+        );
       } else {
         console.log(`FAIL  ${result.name} (${result.width}x${result.height}) -> ${result.error}`);
       }

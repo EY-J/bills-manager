@@ -1,6 +1,6 @@
 # Pocket Ledger (Bills Manager)
 
-Pocket Ledger is an offline-first bills tracker built with React + Vite.
+Pocket Ledger is a bills tracker built with React + Vite.
 It is optimized for mobile app-like use, while still working well on desktop.
 
 ## Core features
@@ -15,7 +15,7 @@ It is optimized for mobile app-like use, while still working well on desktop.
 - Backup and restore data (JSON) with integrity validation.
 - Undo support for important actions.
 - Settings for notification mode, compact mode, and table density.
-- Optional account login (email/password) with email-code verification and auto-sync across devices.
+- Optional account login (email/password) with one-time recovery code and auto-sync across devices.
 - Installable as a PWA on supported mobile browsers.
 
 ## Tech stack
@@ -47,10 +47,23 @@ Use `.env.example` as reference.
   - Required in Vercel production for account sync storage.
 - `AUTH_SESSION_SECRET`
   - Required in Vercel production for secure login session cookies.
-- `RESEND_API_KEY` and `ACCOUNT_EMAIL_FROM`
-  - Required in Vercel production for email verification code delivery.
+- Email provider configuration (choose one):
+  - Gmail SMTP (free-friendly):
+    - `GMAIL_SMTP_USER`
+    - `GMAIL_SMTP_APP_PASSWORD`
+    - Optional: `GMAIL_SMTP_HOST`, `GMAIL_SMTP_PORT`, `GMAIL_SMTP_SECURE`, `GMAIL_SMTP_FROM`
+  - Resend API:
+    - `RESEND_API_KEY`
+  - Shared from address:
+    - `ACCOUNT_EMAIL_FROM` (recommended for production branding)
+- Recovery-code password reset:
+  - New accounts receive a one-time 12-digit recovery code.
+  - Keep it safe; it is required for password reset without email.
 - `AUTH_VERIFICATION_SECRET` (optional)
   - Separate hashing secret for signup verification codes.
+- `AUTH_DEBUG_TOKENS` (optional)
+  - Defaults to disabled in non-production.
+  - Set to `1` only when you intentionally want debug reset/verification artifacts.
 
 ## Runtime monitoring
 
@@ -125,8 +138,13 @@ Critical flow checks include:
    - `KV_REST_API_URL`
    - `KV_REST_API_TOKEN`
    - `AUTH_SESSION_SECRET`
-   - `RESEND_API_KEY`
-   - `ACCOUNT_EMAIL_FROM`
+   - Email provider (choose one):
+     - Gmail SMTP: `GMAIL_SMTP_USER`, `GMAIL_SMTP_APP_PASSWORD`
+     - or Resend API: `RESEND_API_KEY`
+   - `ACCOUNT_EMAIL_FROM` (recommended for production branding)
+   - `AUTH_VERIFICATION_SECRET` (recommended)
+   - `PUBLIC_APP_ORIGIN` (recommended)
+   - `SECURITY_ALERT_WEBHOOK_URL` (optional, recommended)
 3. Deploy.
 
 Security headers are configured in `vercel.json`, including:

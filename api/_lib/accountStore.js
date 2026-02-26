@@ -253,7 +253,7 @@ export async function findUserByEmail(email) {
   return storeGetJson(userKeyByEmail(email));
 }
 
-export async function createUser({ email, passwordHash, passwordSalt }) {
+export async function createUser({ email, passwordHash, passwordSalt, recoveryCodeHash = "" }) {
   const normalized = normalizeEmail(email);
   const now = new Date().toISOString();
   const user = {
@@ -261,6 +261,8 @@ export async function createUser({ email, passwordHash, passwordSalt }) {
     email: normalized,
     passwordHash: String(passwordHash),
     passwordSalt: String(passwordSalt),
+    recoveryCodeHash: String(recoveryCodeHash || ""),
+    sessionVersion: 1,
     createdAt: now,
     updatedAt: now,
   };
@@ -273,10 +275,26 @@ export async function updateUserPassword({ email, passwordHash, passwordSalt }) 
   const existing = await findUserByEmail(normalized);
   if (!existing) return null;
 
+  const previousSessionVersion = Math.max(1, Number(existing.sessionVersion || 1));
   const updated = {
     ...existing,
     passwordHash: String(passwordHash),
     passwordSalt: String(passwordSalt),
+    sessionVersion: previousSessionVersion + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  await storeSetJson(userKeyByEmail(normalized), updated);
+  return updated;
+}
+
+export async function updateUserRecoveryCode({ email, recoveryCodeHash }) {
+  const normalized = normalizeEmail(email);
+  const existing = await findUserByEmail(normalized);
+  if (!existing) return null;
+
+  const updated = {
+    ...existing,
+    recoveryCodeHash: String(recoveryCodeHash || ""),
     updatedAt: new Date().toISOString(),
   };
   await storeSetJson(userKeyByEmail(normalized), updated);
@@ -300,4 +318,12 @@ export async function loadUserBills(userId) {
 
 export async function clearUserBills(userId) {
   await storeDelete(billsKeyByUserId(userId));
+}
+
+export async function deleteUserAccount({ email, userId }) {
+  const normalized = normalizeEmail(email);
+  await Promise.all([
+    storeDelete(userKeyByEmail(normalized)),
+    storeDelete(billsKeyByUserId(userId)),
+  ]);
 }

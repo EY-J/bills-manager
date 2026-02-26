@@ -14,10 +14,19 @@ const LOCAL_API_ROUTES = new Map([
 ])
 
 const LOCAL_API_ERROR_MESSAGE_BY_ROUTE = new Map([
-  ['/api/account-auth', 'Account service is unavailable. Please try again.'],
-  ['/api/account-sync', 'Account service is unavailable. Please try again.'],
+  ['/api/account-auth', 'Account setup is not ready yet. Please restart the app and try again.'],
+  ['/api/account-sync', 'Account setup is not ready yet. Please restart the app and try again.'],
   ['/api/runtime-errors', 'Runtime monitor service is unavailable. Please try again.'],
 ])
+
+function ensureLocalApiAuthSecrets() {
+  if (!String(process.env.AUTH_SESSION_SECRET || '').trim()) {
+    process.env.AUTH_SESSION_SECRET = 'local-dev-session-secret-change-me'
+  }
+  if (!String(process.env.AUTH_VERIFICATION_SECRET || '').trim()) {
+    process.env.AUTH_VERIFICATION_SECRET = 'local-dev-verification-secret-change-me'
+  }
+}
 
 function attachApiResponseHelpers(res) {
   if (typeof res.status !== 'function') {
@@ -58,52 +67,59 @@ async function readRequestBody(req, maxBytes = 2 * 1024 * 1024) {
 }
 
 function localApiPlugin() {
+  const installLocalApiMiddleware = (server) => {
+    server.middlewares.use(async (req, res, next) => {
+      const pathname = String(req.url || '').split('?')[0]
+      const routeFile = LOCAL_API_ROUTES.get(pathname)
+      if (!routeFile) return next()
+
+      try {
+        ensureLocalApiAuthSecrets()
+        attachApiResponseHelpers(res)
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          req.body = await readRequestBody(req)
+        }
+
+        const handlerUrl = `${pathToFileURL(resolve(process.cwd(), routeFile)).href}?t=${Date.now()}`
+        const mod = await import(handlerUrl)
+        const handler = mod?.default
+
+        if (typeof handler !== 'function') {
+          throw new Error(`Invalid API handler for ${pathname}`)
+        }
+
+        await handler(req, res)
+        if (!res.writableEnded) {
+          res.end()
+        }
+      } catch (error) {
+        if (res.writableEnded) return
+        if (!res.headersSent) {
+          const isPayloadTooLarge = error instanceof Error && error.message === 'Payload too large'
+          res.statusCode = isPayloadTooLarge ? 413 : 500
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        }
+        console.error(
+          `[local-api-routes] ${pathname} failed:`,
+          error instanceof Error ? error.message : String(error)
+        )
+        const routeMessage = LOCAL_API_ERROR_MESSAGE_BY_ROUTE.get(pathname) || 'Request failed.'
+        const message =
+          error instanceof Error && error.message === 'Payload too large'
+            ? 'Payload too large'
+            : routeMessage
+        res.end(JSON.stringify({ ok: false, error: message }))
+      }
+    })
+  }
+
   return {
     name: 'local-api-routes',
-    apply: 'serve',
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        const pathname = String(req.url || '').split('?')[0]
-        const routeFile = LOCAL_API_ROUTES.get(pathname)
-        if (!routeFile) return next()
-
-        try {
-          attachApiResponseHelpers(res)
-          if (req.method !== 'GET' && req.method !== 'HEAD') {
-            req.body = await readRequestBody(req)
-          }
-
-          const handlerUrl = `${pathToFileURL(resolve(process.cwd(), routeFile)).href}?t=${Date.now()}`
-          const mod = await import(handlerUrl)
-          const handler = mod?.default
-
-          if (typeof handler !== 'function') {
-            throw new Error(`Invalid API handler for ${pathname}`)
-          }
-
-          await handler(req, res)
-          if (!res.writableEnded) {
-            res.end()
-          }
-        } catch (error) {
-          if (res.writableEnded) return
-          if (!res.headersSent) {
-            const isPayloadTooLarge = error instanceof Error && error.message === 'Payload too large'
-            res.statusCode = isPayloadTooLarge ? 413 : 500
-            res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          }
-          console.error(
-            `[local-api-routes] ${pathname} failed:`,
-            error instanceof Error ? error.message : String(error)
-          )
-          const routeMessage = LOCAL_API_ERROR_MESSAGE_BY_ROUTE.get(pathname) || 'Request failed.'
-          const message =
-            error instanceof Error && error.message === 'Payload too large'
-              ? 'Payload too large'
-              : routeMessage
-          res.end(JSON.stringify({ ok: false, error: message }))
-        }
-      })
+      installLocalApiMiddleware(server)
+    },
+    configurePreviewServer(server) {
+      installLocalApiMiddleware(server)
     },
   }
 }

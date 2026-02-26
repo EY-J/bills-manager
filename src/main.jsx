@@ -16,7 +16,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 );
 
 if ("serviceWorker" in navigator) {
-  if (import.meta.env.PROD) {
+  const hostname = String(window.location.hostname || "").toLowerCase();
+  const isLocalhost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]";
+
+  if (import.meta.env.PROD && !isLocalhost) {
     window.addEventListener("load", () => {
       const swBuildId = import.meta.env.VITE_SW_BUILD_ID || "prod";
       const swUrl = `/sw.js?v=${encodeURIComponent(swBuildId)}`;
@@ -41,7 +47,7 @@ if ("serviceWorker" in navigator) {
         });
     });
   } else {
-    // Avoid stale cache issues during Vite dev/HMR.
+    // Avoid stale cache issues during Vite dev/HMR and localhost preview.
     navigator.serviceWorker.getRegistrations().then((registrations) => {
       registrations.forEach((registration) => registration.unregister());
     });

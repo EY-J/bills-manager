@@ -4,8 +4,11 @@ import {
   isPersistentStoreConfigured,
   loadUserBills,
   saveUserBills,
+  storeGetJson,
+  storeSetJson,
 } from "./_lib/accountStore.js";
 import { getSessionFromRequest } from "./_lib/accountSession.js";
+import { emitSecurityAlert } from "./_lib/securityAlerts.js";
 import { Buffer } from "node:buffer";
 import process from "node:process";
 
@@ -13,6 +16,7 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 120;
 const RATE_LIMIT_MAX_BUCKETS = 1500;
+const DISTRIBUTED_RATE_LIMIT_PREFIX = "account:rate-limit";
 const rateLimitBuckets = new Map();
 
 function setResponseSecurityHeaders(res) {
@@ -58,6 +62,53 @@ function isRateLimited(ip, now = Date.now()) {
   }
   current.count += 1;
   return current.count > RATE_LIMIT_MAX_REQUESTS;
+}
+
+function normalizeRateLimitIdentifier(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "unknown";
+  return raw.replace(/[^a-z0-9:._-]+/g, "_").slice(0, 120) || "unknown";
+}
+
+function distributedRateLimitKey(scope, identifier) {
+  return `${DISTRIBUTED_RATE_LIMIT_PREFIX}:${normalizeRateLimitIdentifier(
+    scope
+  )}:${normalizeRateLimitIdentifier(identifier)}`;
+}
+
+async function isDistributedRateLimited(
+  scope,
+  identifier,
+  {
+    now = Date.now(),
+    maxRequests = RATE_LIMIT_MAX_REQUESTS,
+    windowMs = RATE_LIMIT_WINDOW_MS,
+  } = {}
+) {
+  if (!isPersistentStoreConfigured()) return false;
+  const key = distributedRateLimitKey(scope, identifier);
+  try {
+    const stored = await storeGetJson(key);
+    if (!stored || typeof stored !== "object") {
+      await storeSetJson(key, { windowStart: now, count: 1 });
+      return false;
+    }
+
+    const windowStart = Number(stored.windowStart || 0);
+    const count = Math.max(0, Number(stored.count || 0));
+    const withinWindow = Number.isFinite(windowStart) && now - windowStart <= windowMs;
+    if (!withinWindow) {
+      await storeSetJson(key, { windowStart: now, count: 1 });
+      return false;
+    }
+
+    const nextCount = count + 1;
+    await storeSetJson(key, { windowStart, count: nextCount });
+    return nextCount > maxRequests;
+  } catch {
+    // Fail open if distributed limiter is temporarily unavailable.
+    return false;
+  }
 }
 
 function isSameOriginRequest(req) {
@@ -114,6 +165,8 @@ async function resolveAuthedUser(req) {
   if (!session) return null;
   const user = await findUserByEmail(session.email);
   if (!user || String(user.id || "") !== session.uid) return null;
+  const sessionVersion = Math.max(1, Number(user.sessionVersion || 1));
+  if (sessionVersion !== Number(session.sessionVersion || 1)) return null;
   return user;
 }
 
@@ -153,7 +206,24 @@ export default async function handler(req, res) {
   }
 
   const clientIp = getClientIp(req);
-  if (isRateLimited(clientIp)) {
+  const rateLimitNow = Date.now();
+  const localRateLimited = isRateLimited(clientIp, rateLimitNow);
+  const distributedRateLimited = await isDistributedRateLimited(
+    "account-sync-endpoint",
+    clientIp,
+    {
+      now: rateLimitNow,
+      maxRequests: RATE_LIMIT_MAX_REQUESTS,
+      windowMs: RATE_LIMIT_WINDOW_MS,
+    }
+  );
+  if (localRateLimited || distributedRateLimited) {
+    await emitSecurityAlert({
+      type: "account-sync-rate-limit",
+      severity: "warning",
+      message: "Account sync endpoint rate limit triggered.",
+      context: { ip: clientIp },
+    });
     res.setHeader("Retry-After", "60");
     return res.status(429).json({ ok: false, error: "Rate limit exceeded" });
   }
@@ -173,6 +243,15 @@ export default async function handler(req, res) {
         payload: record?.payload || null,
       });
     } catch {
+      await emitSecurityAlert({
+        type: "account-sync-load-failed",
+        severity: "error",
+        message: "Could not load account data from storage.",
+        context: {
+          userId: user.id,
+          ip: clientIp,
+        },
+      });
       return res.status(500).json({
         ok: false,
         error: "Could not load account data.",
@@ -211,6 +290,15 @@ export default async function handler(req, res) {
       payload,
     });
   } catch {
+    await emitSecurityAlert({
+      type: "account-sync-save-failed",
+      severity: "error",
+      message: "Could not save account data to storage.",
+      context: {
+        userId: user.id,
+        ip: clientIp,
+      },
+    });
     return res.status(500).json({
       ok: false,
       error: "Could not save account data.",
