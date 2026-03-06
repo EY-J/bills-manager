@@ -4,6 +4,7 @@ import { getPlanProgress } from "../billsUtils.js";
 
 function getBillStatus(bill) {
   if (bill.archived) return { label: "Archived", tone: "archived" };
+  if (bill.meta.settledInFull) return { label: "Paid in full", tone: "paid" };
   if (bill.meta.overdue) {
     if (bill.meta.partiallyPaid) {
       return {
@@ -125,12 +126,12 @@ export default function BillsTable({
                 ? "Overdue"
                 : status.tone === "partial"
                   ? "Partial"
-                  : status.tone === "dueSoon"
+                : status.tone === "dueSoon"
                     ? b.meta.daysToDue === 0
                       ? "Due today"
                       : "Due soon"
                     : status.tone === "paid"
-                      ? "Paid"
+                      ? status.label
                       : status.tone === "archived"
                         ? "Archived"
                         : "Upcoming";
@@ -586,6 +587,8 @@ function renderHighlightedText(text, query) {
 }
 
 function formatCadenceLabel(cadence) {
+  if (cadence === "one-time") return "One-time";
+  if (cadence === "statement-plan") return "Statement plan";
   const raw = String(cadence || "monthly");
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }

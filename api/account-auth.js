@@ -10,7 +10,7 @@ import {
   updateUserRecoveryCode,
   updateUserPassword,
 } from "./_lib/accountStore.js";
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import { Buffer } from "node:buffer";
 import process from "node:process";
 import {
@@ -21,11 +21,6 @@ import {
   setSessionCookie,
   verifyPassword,
 } from "./_lib/accountSession.js";
-import {
-  sendPasswordResetLinkEmail,
-  sendSignupVerificationEmail,
-  shouldExposeAuthDebugArtifacts,
-} from "./_lib/accountEmail.js";
 import { emitSecurityAlert } from "./_lib/securityAlerts.js";
 
 const MAX_BODY_BYTES = 8 * 1024;
@@ -34,11 +29,6 @@ const RATE_LIMIT_MAX_REQUESTS = 45;
 const RATE_LIMIT_MAX_BUCKETS = 1200;
 const DISTRIBUTED_RATE_LIMIT_PREFIX = "account:rate-limit";
 const rateLimitBuckets = new Map();
-const SIGNUP_CODE_TTL_MS = 10 * 60 * 1000;
-const SIGNUP_CODE_RESEND_COOLDOWN_MS = 30 * 1000;
-const SIGNUP_CODE_MAX_ATTEMPTS = 5;
-const PASSWORD_RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
-const PASSWORD_RESET_RESEND_COOLDOWN_MS = 30 * 1000;
 const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_FAILURE_MAX_ATTEMPTS = 6;
 const LOGIN_FAILURE_LOCK_MS = 5 * 60 * 1000;
@@ -231,18 +221,6 @@ function validateStrongPassword(password) {
   return { ok: true, value };
 }
 
-function normalizeVerificationCode(code) {
-  return String(code || "").replace(/\D+/g, "").slice(0, 6);
-}
-
-function validateVerificationCode(code) {
-  const value = normalizeVerificationCode(code);
-  if (value.length !== 6) {
-    return { ok: false, reason: "Enter the 6-digit verification code." };
-  }
-  return { ok: true, value };
-}
-
 function createRecoveryCode() {
   const group = () => String(randomInt(0, 10_000)).padStart(4, "0");
   return `${group()}-${group()}-${group()}`;
@@ -258,18 +236,6 @@ function validateRecoveryCode(code) {
     return { ok: false, reason: "Enter the 12-digit recovery code." };
   }
   return { ok: true, value };
-}
-
-function signupCodeKey(email) {
-  return `account:signup:code:${normalizeEmail(email)}`;
-}
-
-function passwordResetThrottleKey(email) {
-  return `account:password-reset:throttle:${normalizeEmail(email)}`;
-}
-
-function passwordResetTokenKey(tokenHash) {
-  return `account:password-reset:token:${String(tokenHash || "")}`;
 }
 
 function abuseChallengeStateKey(scope, clientIp = "") {
@@ -583,24 +549,6 @@ function getVerificationSecret() {
   return "";
 }
 
-function hashVerificationCode(email, code) {
-  const secret = getVerificationSecret();
-  if (!secret) {
-    throw new Error("AUTH_VERIFICATION_SECRET is required in production.");
-  }
-  const payload = `${normalizeEmail(email)}:${normalizeVerificationCode(code)}`;
-  return createHmac("sha256", secret).update(payload).digest("hex");
-}
-
-function hashPasswordResetToken(token) {
-  const secret = getVerificationSecret();
-  if (!secret) {
-    throw new Error("AUTH_VERIFICATION_SECRET is required in production.");
-  }
-  const payload = `password-reset-token:${String(token || "").trim()}`;
-  return createHmac("sha256", secret).update(payload).digest("hex");
-}
-
 function hashRecoveryCode(email, code) {
   const secret = getVerificationSecret();
   if (!secret) {
@@ -608,62 +556,6 @@ function hashRecoveryCode(email, code) {
   }
   const payload = `recovery-code:${normalizeEmail(email)}:${normalizeRecoveryCode(code)}`;
   return createHmac("sha256", secret).update(payload).digest("hex");
-}
-
-function createPasswordResetToken() {
-  return randomBytes(32).toString("base64url");
-}
-
-function validatePasswordResetToken(token) {
-  const value = String(token || "").trim();
-  if (!value) {
-    return { ok: false, reason: "Reset link is invalid." };
-  }
-  if (value.length > 240) {
-    return { ok: false, reason: "Reset link is invalid." };
-  }
-  const validFormat = /^[A-Za-z0-9_-]+$/.test(value);
-  if (!validFormat) {
-    return { ok: false, reason: "Reset link is invalid." };
-  }
-  return { ok: true, value };
-}
-
-function normalizeOrigin(rawOrigin) {
-  const value = String(rawOrigin || "").trim();
-  if (!value) return "";
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return "";
-  }
-}
-
-function resolveRequestOrigin(req) {
-  const configured = normalizeOrigin(process.env.PUBLIC_APP_ORIGIN);
-  if (configured) return configured;
-
-  const protoHeader = String(req.headers["x-forwarded-proto"] || "").split(",")[0]?.trim();
-  const proto =
-    protoHeader === "https" || protoHeader === "http"
-      ? protoHeader
-      : process.env.NODE_ENV === "production"
-        ? "https"
-        : "http";
-  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").trim();
-  if (!host) return "";
-  return `${proto}://${host}`;
-}
-
-function buildPasswordResetUrl(req, token) {
-  const origin = resolveRequestOrigin(req);
-  if (!origin) return "";
-  const url = new URL(origin);
-  url.pathname = "/";
-  url.searchParams.set("resetToken", String(token || "").trim());
-  return url.toString();
 }
 
 function safeHashEqual(left, right) {
@@ -723,7 +615,6 @@ async function resolveSessionUser(req) {
 export default async function handler(req, res) {
   setResponseSecurityHeaders(res);
   const storeMode = getStoreMode();
-  const exposeAuthDebugArtifacts = shouldExposeAuthDebugArtifacts();
 
   if (!isCloudStorageReady()) {
     return res.status(503).json({
@@ -793,19 +684,11 @@ export default async function handler(req, res) {
   if (action === "create-account" || action === "register") {
     action = "signup";
   }
-  if (
-    action === "forgot-password" ||
-    action === "request-reset-code" ||
-    action === "request-password-reset-code"
-  ) {
-    action = "request-password-reset-link";
-  }
   if (action === "complete-reset" || action === "reset-password") {
-    action = "complete-password-reset-token";
+    action = "complete-password-reset-recovery";
   }
   if (action === "complete-password-reset") {
-    // Backward compatible alias; now expects reset token.
-    action = "complete-password-reset-token";
+    action = "complete-password-reset-recovery";
   }
   if (
     action === "recover-password" ||
@@ -825,10 +708,6 @@ export default async function handler(req, res) {
 
   if (
     action !== "signup" &&
-    action !== "request-signup-code" &&
-    action !== "complete-signup" &&
-    action !== "request-password-reset-link" &&
-    action !== "complete-password-reset-token" &&
     action !== "complete-password-reset-recovery" &&
     action !== "delete-account" &&
     action !== "login"
@@ -875,9 +754,6 @@ export default async function handler(req, res) {
 
   const actionNeedsEmail =
     action === "signup" ||
-    action === "request-signup-code" ||
-    action === "complete-signup" ||
-    action === "request-password-reset-link" ||
     action === "complete-password-reset-recovery" ||
     action === "login";
 
@@ -888,76 +764,6 @@ export default async function handler(req, res) {
       return res.status(422).json({ ok: false, error: emailCheck.reason });
     }
     email = emailCheck.value;
-  }
-
-  if (action === "request-signup-code") {
-    const existing = await findUserByEmail(email);
-    if (existing) {
-      return res.status(409).json({ ok: false, error: "Email is already registered." });
-    }
-
-    const now = Date.now();
-    const codeKey = signupCodeKey(email);
-    const pending = await storeGetJson(codeKey);
-    if (
-      pending &&
-      Number.isFinite(Number(pending.sentAt)) &&
-      now - Number(pending.sentAt) < SIGNUP_CODE_RESEND_COOLDOWN_MS &&
-      Number(pending.expiresAt || 0) > now
-    ) {
-      const waitSeconds = Math.ceil(
-        (SIGNUP_CODE_RESEND_COOLDOWN_MS - (now - Number(pending.sentAt))) / 1000
-      );
-      res.setHeader("Retry-After", String(Math.max(waitSeconds, 1)));
-      return res.status(429).json({
-        ok: false,
-        error: `Please wait ${Math.max(waitSeconds, 1)}s before requesting another link.`,
-      });
-    }
-
-    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    const codeHash = hashVerificationCode(email, code);
-    await storeSetJson(codeKey, {
-      email,
-      codeHash,
-      sentAt: now,
-      expiresAt: now + SIGNUP_CODE_TTL_MS,
-      attempts: 0,
-    });
-
-    const emailResult = await sendSignupVerificationEmail({
-      toEmail: email,
-      code,
-      ttlMinutes: Math.round(SIGNUP_CODE_TTL_MS / 60000),
-    });
-    if (!emailResult.ok) {
-      await emitSecurityAlert({
-        type: "signup-email-delivery-failed",
-        severity: "error",
-        message: "Signup verification email delivery failed.",
-        context: {
-          ip,
-          email,
-          provider: emailResult.provider || "unknown",
-        },
-      });
-      await storeDelete(codeKey);
-      return res.status(503).json({
-        ok: false,
-        error: emailResult.error || "Could not send verification email.",
-      });
-    }
-
-    const response = {
-      ok: true,
-      verificationRequired: true,
-      expiresInSeconds: Math.floor(SIGNUP_CODE_TTL_MS / 1000),
-      storageMode: storeMode,
-    };
-    if (emailResult.debugCode && exposeAuthDebugArtifacts) {
-      response.debugCode = emailResult.debugCode;
-    }
-    return res.status(200).json(response);
   }
 
   if (action === "signup") {
@@ -989,186 +795,7 @@ export default async function handler(req, res) {
       passwordSalt: salt,
       recoveryCodeHash,
     });
-    await storeDelete(signupCodeKey(email));
     await clearAbuseChallengeState("signup", ip);
-    if (!issueSessionOrFail(res, req, user)) return;
-    return res.status(200).json({
-      ok: true,
-      user: publicUser(user),
-      recoveryCode,
-      storageMode: storeMode,
-    });
-  }
-
-  if (action === "request-password-reset-link") {
-    const existing = await findUserByEmail(email);
-    if (!existing) {
-      // Return success regardless to avoid account email enumeration.
-      const response = {
-        ok: true,
-        linkSent: true,
-        expiresInSeconds: Math.floor(PASSWORD_RESET_TOKEN_TTL_MS / 1000),
-        storageMode: storeMode,
-      };
-      if (exposeAuthDebugArtifacts) {
-        response.debugNoAccount = true;
-      }
-      return res.status(200).json(response);
-    }
-
-    const now = Date.now();
-    const throttleKey = passwordResetThrottleKey(email);
-    const pending = await storeGetJson(throttleKey);
-    if (
-      pending &&
-      Number.isFinite(Number(pending.sentAt)) &&
-      now - Number(pending.sentAt) < PASSWORD_RESET_RESEND_COOLDOWN_MS &&
-      Number(pending.expiresAt || 0) > now
-    ) {
-      const waitSeconds = Math.ceil(
-        (PASSWORD_RESET_RESEND_COOLDOWN_MS - (now - Number(pending.sentAt))) / 1000
-      );
-      res.setHeader("Retry-After", String(Math.max(waitSeconds, 1)));
-      return res.status(429).json({
-        ok: false,
-        error: `Please wait ${Math.max(waitSeconds, 1)}s before requesting another code.`,
-      });
-    }
-
-    if (pending?.tokenHash) {
-      await storeDelete(passwordResetTokenKey(pending.tokenHash));
-    }
-
-    const token = createPasswordResetToken();
-    const tokenHash = hashPasswordResetToken(token);
-    await storeSetJson(passwordResetTokenKey(tokenHash), {
-      email,
-      createdAt: now,
-      expiresAt: now + PASSWORD_RESET_TOKEN_TTL_MS,
-    });
-    await storeSetJson(throttleKey, {
-      sentAt: now,
-      expiresAt: now + PASSWORD_RESET_TOKEN_TTL_MS,
-      tokenHash,
-    });
-
-    const resetUrl = buildPasswordResetUrl(req, token);
-    if (!resetUrl) {
-      await storeDelete(passwordResetTokenKey(tokenHash));
-      await storeDelete(throttleKey);
-      return res.status(503).json({
-        ok: false,
-        error: "Could not build password reset link.",
-      });
-    }
-
-    const emailResult = await sendPasswordResetLinkEmail({
-      toEmail: email,
-      resetUrl,
-      ttlMinutes: Math.round(PASSWORD_RESET_TOKEN_TTL_MS / 60000),
-    });
-    if (!emailResult.ok) {
-      await emitSecurityAlert({
-        type: "password-reset-email-delivery-failed",
-        severity: "error",
-        message: "Password reset email delivery failed.",
-        context: {
-          ip,
-          email,
-          provider: emailResult.provider || "unknown",
-        },
-      });
-      await storeDelete(passwordResetTokenKey(tokenHash));
-      await storeDelete(throttleKey);
-      return res.status(503).json({
-        ok: false,
-        error: emailResult.error || "Could not send password reset email.",
-      });
-    }
-
-    const response = {
-      ok: true,
-      linkSent: true,
-      expiresInSeconds: Math.floor(PASSWORD_RESET_TOKEN_TTL_MS / 1000),
-      storageMode: storeMode,
-    };
-    if (exposeAuthDebugArtifacts) {
-      // In non-production, always return the reset link so local testing works
-      // even when no email provider is configured.
-      response.debugResetLink = resetUrl;
-    }
-    return res.status(200).json(response);
-  }
-
-  if (action === "complete-signup") {
-    const passwordCheck = validateStrongPassword(payload.password);
-    if (!passwordCheck.ok) {
-      return res.status(422).json({ ok: false, error: passwordCheck.reason });
-    }
-    const codeCheck = validateVerificationCode(payload.code);
-    if (!codeCheck.ok) {
-      return res.status(422).json({ ok: false, error: codeCheck.reason });
-    }
-
-    const existing = await findUserByEmail(email);
-    if (existing) {
-      return res.status(409).json({ ok: false, error: "Email is already registered." });
-    }
-
-    const now = Date.now();
-    const codeKey = signupCodeKey(email);
-    const pending = await storeGetJson(codeKey);
-    if (!pending || normalizeEmail(pending.email) !== email) {
-      return res.status(400).json({
-        ok: false,
-        error: "Verification code was not requested for this email.",
-      });
-    }
-    if (Number(pending.expiresAt || 0) <= now) {
-      await storeDelete(codeKey);
-      return res.status(410).json({
-        ok: false,
-        error: "Verification code has expired. Request a new code.",
-      });
-    }
-
-    const attempts = Math.max(0, Number(pending.attempts || 0));
-    if (attempts >= SIGNUP_CODE_MAX_ATTEMPTS) {
-      await storeDelete(codeKey);
-      return res.status(429).json({
-        ok: false,
-        error: "Too many invalid attempts. Request a new verification code.",
-      });
-    }
-
-    const expectedHash = String(pending.codeHash || "");
-    const receivedHash = hashVerificationCode(email, codeCheck.value);
-    if (!safeHashEqual(expectedHash, receivedHash)) {
-      const nextAttempts = attempts + 1;
-      if (nextAttempts >= SIGNUP_CODE_MAX_ATTEMPTS) {
-        await storeDelete(codeKey);
-      } else {
-        await storeSetJson(codeKey, {
-          ...pending,
-          attempts: nextAttempts,
-        });
-      }
-      return res.status(401).json({
-        ok: false,
-        error: "Invalid verification code.",
-      });
-    }
-
-    const recoveryCode = createRecoveryCode();
-    const recoveryCodeHash = hashRecoveryCode(email, recoveryCode);
-    const { hash, salt } = hashPassword(passwordCheck.value);
-    const user = await createUser({
-      email,
-      passwordHash: hash,
-      passwordSalt: salt,
-      recoveryCodeHash,
-    });
-    await storeDelete(codeKey);
     if (!issueSessionOrFail(res, req, user)) return;
     return res.status(200).json({
       ok: true,
@@ -1282,66 +909,6 @@ export default async function handler(req, res) {
 
     await clearAbuseChallengeState("recovery", ip);
     await clearRecoveryResetFailureState(email, ip);
-    if (!issueSessionOrFail(res, req, user)) return;
-    return res.status(200).json({
-      ok: true,
-      user: publicUser(user),
-      storageMode: storeMode,
-    });
-  }
-
-  if (action === "complete-password-reset-token") {
-    const tokenCheck = validatePasswordResetToken(payload.token);
-    if (!tokenCheck.ok) {
-      return res.status(422).json({ ok: false, error: tokenCheck.reason });
-    }
-    const passwordCheck = validateStrongPassword(payload.password);
-    if (!passwordCheck.ok) {
-      return res.status(422).json({ ok: false, error: passwordCheck.reason });
-    }
-
-    const now = Date.now();
-    const tokenHash = hashPasswordResetToken(tokenCheck.value);
-    const tokenKey = passwordResetTokenKey(tokenHash);
-    const pending = await storeGetJson(tokenKey);
-    if (!pending) {
-      return res.status(400).json({
-        ok: false,
-        error: "Reset link is invalid or has already been used.",
-      });
-    }
-    if (Number(pending.expiresAt || 0) <= now) {
-      await storeDelete(tokenKey);
-      return res.status(410).json({
-        ok: false,
-        error: "Reset link has expired. Request a new link.",
-      });
-    }
-
-    const email = normalizeEmail(pending.email);
-    const existing = await findUserByEmail(email);
-    if (!existing) {
-      await storeDelete(tokenKey);
-      return res.status(400).json({
-        ok: false,
-        error: "Reset link is invalid or has already been used.",
-      });
-    }
-
-    const { hash, salt } = hashPassword(passwordCheck.value);
-    const user = await updateUserPassword({
-      email,
-      passwordHash: hash,
-      passwordSalt: salt,
-    });
-    await storeDelete(tokenKey);
-    await storeDelete(passwordResetThrottleKey(email));
-    if (!user) {
-      return res.status(400).json({
-        ok: false,
-        error: "Reset link is invalid or has already been used.",
-      });
-    }
     if (!issueSessionOrFail(res, req, user)) return;
     return res.status(200).json({
       ok: true,

@@ -30,6 +30,10 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
+import {
+  deleteCreatedAccountIfNeeded,
+  ensureAuthenticatedSession,
+} from "./_e2e-account-session.mjs";
 
 const HOST = "127.0.0.1";
 const NPM_EXEC_PATH = String(process.env.npm_execpath || "").trim();
@@ -48,6 +52,8 @@ const VIEWPORTS = [
   { name: "Laptop", width: 1366, height: 768 },
   { name: "Desktop FHD", width: 1920, height: 1080 },
 ];
+const E2E_UNLOCK_KEY = "__bills_e2e_unlock_session_v1";
+const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
 
 function selectViewports() {
   const raw = String(process.env.RESPONSIVE_VIEWPORTS || "").trim();
@@ -181,6 +187,11 @@ function normalizeBaseUrl(rawUrl) {
   }
 }
 
+function isLoopbackHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
 async function findFreePort(host = HOST) {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -249,13 +260,29 @@ async function stopPreviewProcess(preview) {
 
 async function seedData(page) {
   const payload = seedPayload();
-  await page.evaluate((data) => {
+  await page.evaluate(({ data, unlockKey, knownKey }) => {
     localStorage.setItem("bills_manager_v1", JSON.stringify(data));
     localStorage.setItem("bills_notify_enabled", "false");
     localStorage.setItem("bills_compact_mode", "false");
     localStorage.setItem("bills_table_density", "comfortable");
     localStorage.setItem("bills_notify_mode", "digest");
-  }, payload);
+    localStorage.setItem(unlockKey, "1");
+    localStorage.setItem(knownKey, "1");
+  }, { data: payload, unlockKey: E2E_UNLOCK_KEY, knownKey: ACCOUNT_KNOWN_KEY });
+}
+
+async function clickFirstVisible(page, locators, label, timeoutMs = 8_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    for (const locator of locators) {
+      if ((await locator.count()) === 0) continue;
+      if (!(await locator.isVisible())) continue;
+      await locator.click();
+      return;
+    }
+    await sleep(120);
+  }
+  throw new Error(`Could not find visible control: ${label}`);
 }
 
 async function assertNoHorizontalOverflow(page, label) {
@@ -382,11 +409,47 @@ async function openFirstBillDetails(page, viewportName) {
   await assertNoHorizontalOverflow(page, `${viewportName}: details opened from row`);
 }
 
-async function runViewportCheck(browser, viewport, baseUrl) {
+async function waitForTrackerOrAccountLocked(page, timeoutMs = 12_000) {
+  const started = Date.now();
+  let sawAccountLocked = false;
+  while (Date.now() - started < timeoutMs) {
+    const state = await page.evaluate(() => {
+      const trackerById = Boolean(
+        document.querySelector('[data-testid="bills-tracker-title"]')
+      );
+      const trackerByHeading = Array.from(document.querySelectorAll("h2")).some(
+        (node) => node.textContent?.trim() === "Bills Tracker"
+      );
+      const accountLocked = Boolean(
+        document.querySelector('[data-testid="account-locked-card"]')
+      );
+      if (trackerById || trackerByHeading) return "tracker";
+      if (accountLocked) return "account-locked";
+      return "";
+    });
+    if (state === "tracker") return "tracker";
+    if (state === "account-locked") {
+      sawAccountLocked = true;
+    }
+    await sleep(120);
+  }
+  if (sawAccountLocked) return "account-locked";
+  throw new Error(`App did not render tracker/account lock within ${timeoutMs}ms`);
+}
+
+async function runViewportCheck(
+  browser,
+  viewport,
+  baseUrl,
+  { authStorageState = null, requireExternalAccount = false } = {}
+) {
+  const host = String(new URL(baseUrl).hostname || "");
+  const isExternalHost = !isLoopbackHost(host);
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     isMobile: viewport.width <= 700,
     hasTouch: viewport.width <= 1024,
+    ...(authStorageState ? { storageState: authStorageState } : {}),
   });
   const page = await context.newPage();
 
@@ -396,15 +459,43 @@ async function runViewportCheck(browser, viewport, baseUrl) {
     await seedData(page);
     await page.reload({ waitUntil: "domcontentloaded" });
 
-    await page
-      .locator('h2:has-text("Bills Tracker")')
-      .first()
-      .waitFor({ state: "visible", timeout: 12_000 });
+    let readyState = await waitForTrackerOrAccountLocked(page, 12_000);
+    if (readyState === "account-locked" && isExternalHost && requireExternalAccount) {
+      await page.waitForTimeout(400);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      readyState = await waitForTrackerOrAccountLocked(page, 12_000);
+    }
+
+    if (readyState === "account-locked") {
+      if (isExternalHost) {
+        const note = "Responsive bill-flow checks skipped: deployed app remained account-locked.";
+        if (requireExternalAccount) {
+          return {
+            ...viewport,
+            status: "fail",
+            error: note,
+          };
+        }
+        return {
+          ...viewport,
+          status: "skip",
+          note,
+        };
+      }
+      throw new Error("Bills tracker did not unlock after seeded local session.");
+    }
 
     await assertNoHorizontalOverflow(page, `${viewport.name}: root`);
 
-    const settingsOpenBtn = page.locator('button[aria-label="Open settings"]:visible').first();
-    await settingsOpenBtn.click();
+    await clickFirstVisible(
+      page,
+      [
+        page.getByTestId("open-settings-button-desktop").first(),
+        page.getByTestId("open-settings-button-mobile").first(),
+        page.locator('button[aria-label="Open settings"]:visible').first(),
+      ],
+      "Open settings button"
+    );
     await assertElementFitsWidth(
       page,
       ".settingsModal",
@@ -618,6 +709,10 @@ async function main() {
   let preview = null;
   let browser = null;
   const results = [];
+  const requireExternalAccount =
+    isExternalRun && String(process.env.E2E_REQUIRE_ACCOUNT || "").trim() === "1";
+  let authStorageState = null;
+  let seededExternalAccount = { created: false, password: "" };
 
   const stopPreview = async () => {
     await stopPreviewProcess(preview);
@@ -642,6 +737,36 @@ async function main() {
     await waitForServer(baseUrl);
     browser = await chromium.launch({ headless: true });
 
+    if (isExternalRun) {
+      const authContext = await browser.newContext({
+        baseURL: baseUrl,
+        viewport: { width: 1366, height: 768 },
+      });
+      const authPage = await authContext.newPage();
+      await authPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+      const authResult = await ensureAuthenticatedSession(authPage, {
+        label: "responsive-shared",
+        strict: requireExternalAccount,
+      });
+      if (authResult.status !== "pass") {
+        await authContext.close();
+        if (authResult.status === "fail") {
+          throw new Error(authResult.reason);
+        }
+        for (const vp of targetViewports) {
+          results.push({
+            ...vp,
+            status: "skip",
+            note: `Responsive bill-flow checks skipped: ${authResult.reason}`,
+          });
+        }
+      } else {
+        authStorageState = await authContext.storageState();
+        seededExternalAccount = authResult;
+        await authContext.close();
+      }
+    }
+
     console.log(
       `Running responsive checks on ${targetViewports.length} viewport(s) [${
         isExternalRun ? "external preview" : "local preview"
@@ -650,16 +775,23 @@ async function main() {
       }...`
     );
 
-    for (const vp of targetViewports) {
-      console.log(`Checking ${vp.name} (${vp.width}x${vp.height})...`);
-      const outcome = await runViewportCheck(browser, vp, baseUrl);
-      results.push(outcome);
+    if (results.length === 0) {
+      for (const vp of targetViewports) {
+        console.log(`Checking ${vp.name} (${vp.width}x${vp.height})...`);
+        const outcome = await runViewportCheck(browser, vp, baseUrl, {
+          authStorageState,
+          requireExternalAccount,
+        });
+        results.push(outcome);
+      }
     }
 
     console.log("\nResponsive matrix results:");
     for (const r of results) {
       if (r.status === "pass") {
         console.log(`PASS  ${r.name} (${r.width}x${r.height})`);
+      } else if (r.status === "skip") {
+        console.log(`SKIP  ${r.name} (${r.width}x${r.height}) -> ${r.note}`);
       } else {
         console.log(`FAIL  ${r.name} (${r.width}x${r.height}) -> ${r.error}`);
       }
@@ -687,6 +819,17 @@ async function main() {
       } catch {
         // Best-effort diagnostics only.
       }
+    }
+
+    if (browser && isExternalRun && seededExternalAccount.created && authStorageState) {
+      const cleanupContext = await browser.newContext({
+        baseURL: baseUrl,
+        storageState: authStorageState,
+      });
+      const cleanupPage = await cleanupContext.newPage();
+      await cleanupPage.goto(baseUrl, { waitUntil: "domcontentloaded" });
+      await deleteCreatedAccountIfNeeded(cleanupPage, seededExternalAccount);
+      await cleanupContext.close();
     }
 
     if (browser) await browser.close();

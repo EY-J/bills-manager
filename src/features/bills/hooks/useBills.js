@@ -106,6 +106,8 @@ function addDays(date, days) {
 }
 
 function shouldRollForward(dueDate, cadence, today) {
+  if (cadence === "one-time" || cadence === "statement-plan") return false;
+
   if (cadence === "monthly") {
     return monthIndex(dueDate) < monthIndex(today);
   }
@@ -174,6 +176,34 @@ function normalizeCadence(cadence) {
   return BILL_CADENCE_OPTIONS.includes(cadence) ? cadence : "monthly";
 }
 
+function normalizeStatementAmounts(statementAmounts, fallbackAmount = 0) {
+  const raw = Array.isArray(statementAmounts) ? statementAmounts : [];
+  const amounts = raw
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => Number(n.toFixed(2)));
+
+  if (amounts.length > 0) return amounts;
+
+  const fallback = Math.max(0, Number(fallbackAmount || 0));
+  if (fallback > 0) return [Number(fallback.toFixed(2))];
+
+  return [];
+}
+
+function normalizeStatementIndex(statementIndex, statementAmounts) {
+  const maxIndex = Math.max((statementAmounts?.length || 0) - 1, 0);
+  const n = Number(statementIndex);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.floor(n), maxIndex);
+}
+
+function getStatementAmountAt(statementAmounts, index, fallbackAmount = 0) {
+  const n = Number(statementAmounts?.[index]);
+  if (Number.isFinite(n) && n > 0) return Number(n.toFixed(2));
+  return Math.max(0, Number(fallbackAmount || 0));
+}
+
 function normalizeReminderDays(reminderDays) {
   const n = Number(reminderDays);
   return BILL_REMINDER_OPTIONS.includes(n) ? n : 3;
@@ -194,6 +224,8 @@ function normalizeSettledCycles(settledCycles) {
 }
 
 export function applyPaymentToCycle(bill, payment) {
+  const isOneTime = bill?.cadence === "one-time";
+  const isStatementPlan = bill?.cadence === "statement-plan";
   const cycleAmount = Math.max(0, Number(bill.amount || 0));
   let cyclePaidAmount = normalizeCyclePaidAmount(
     bill.cyclePaidAmount,
@@ -201,7 +233,7 @@ export function applyPaymentToCycle(bill, payment) {
   );
   const paymentAmount = Math.max(0, Number(payment.amount || 0));
 
-  if (cycleAmount <= 0) {
+  if (cycleAmount <= 0 && !isStatementPlan) {
     return {
       bill: {
         ...bill,
@@ -209,6 +241,108 @@ export function applyPaymentToCycle(bill, payment) {
         cyclePaidAmount: 0,
       },
       settledCycles: 0,
+    };
+  }
+
+  if (isOneTime) {
+    const alreadySettled = cyclePaidAmount >= cycleAmount;
+    cyclePaidAmount = normalizeCyclePaidAmount(
+      cyclePaidAmount + paymentAmount,
+      cycleAmount
+    );
+    const settledCycles = !alreadySettled && cyclePaidAmount >= cycleAmount ? 1 : 0;
+    const totalMonths = Math.max(0, Number(bill.totalMonths || 0));
+    const nextPaidMonths =
+      totalMonths > 0
+        ? Math.min(
+            totalMonths,
+            Math.max(0, Number(bill.paidMonths || 0)) + settledCycles
+          )
+        : 0;
+
+    return {
+      bill: {
+        ...bill,
+        paidMonths: nextPaidMonths,
+        cyclePaidAmount,
+        payments: [
+          { ...payment, settledCycles: normalizeSettledCycles(settledCycles) },
+          ...(bill.payments || []),
+        ],
+      },
+      settledCycles,
+    };
+  }
+
+  if (isStatementPlan) {
+    const statementAmounts = normalizeStatementAmounts(
+      bill?.statementAmounts,
+      cycleAmount
+    );
+    const safeStatementAmounts =
+      statementAmounts.length > 0 ? statementAmounts : [cycleAmount];
+    let statementIndex = normalizeStatementIndex(
+      bill?.statementIndex,
+      safeStatementAmounts
+    );
+    let activeCycleAmount = getStatementAmountAt(
+      safeStatementAmounts,
+      statementIndex,
+      cycleAmount
+    );
+    let carry = normalizeCyclePaidAmount(bill?.cyclePaidAmount, activeCycleAmount);
+    carry += paymentAmount;
+
+    let settledCycles = 0;
+    let nextDueDate = bill.dueDate;
+
+    while (activeCycleAmount > 0 && carry >= activeCycleAmount) {
+      carry -= activeCycleAmount;
+      settledCycles += 1;
+
+      if (statementIndex < safeStatementAmounts.length - 1) {
+        statementIndex += 1;
+        nextDueDate = advanceDueDateByCadence(nextDueDate, "monthly");
+        activeCycleAmount = getStatementAmountAt(
+          safeStatementAmounts,
+          statementIndex,
+          cycleAmount
+        );
+      } else {
+        // Final statement settled: keep final statement fully paid.
+        carry = 0;
+        break;
+      }
+    }
+
+    const atLastStatement = statementIndex >= safeStatementAmounts.length - 1;
+    const cyclePaidAmountNext =
+      atLastStatement && settledCycles > 0 && carry === 0
+        ? activeCycleAmount
+        : normalizeCyclePaidAmount(carry, activeCycleAmount);
+
+    const totalMonths = safeStatementAmounts.length;
+    const nextPaidMonths = Math.min(
+      totalMonths,
+      Math.max(0, Number(bill.paidMonths || 0)) + settledCycles
+    );
+
+    return {
+      bill: {
+        ...bill,
+        dueDate: nextDueDate,
+        amount: activeCycleAmount,
+        statementAmounts: safeStatementAmounts,
+        statementIndex,
+        totalMonths,
+        paidMonths: nextPaidMonths,
+        cyclePaidAmount: cyclePaidAmountNext,
+        payments: [
+          { ...payment, settledCycles: normalizeSettledCycles(settledCycles) },
+          ...(bill.payments || []),
+        ],
+      },
+      settledCycles,
     };
   }
 
@@ -247,10 +381,49 @@ export function applyPaymentToCycle(bill, payment) {
 }
 
 function normalizeBillShape(bill) {
-  const plan = normalizePlan(bill?.totalMonths, bill?.paidMonths);
+  const cadence = normalizeCadence(bill?.cadence);
+  const statementAmounts =
+    cadence === "statement-plan"
+      ? normalizeStatementAmounts(bill?.statementAmounts, bill?.amount)
+      : [];
+  const statementIndex =
+    cadence === "statement-plan"
+      ? normalizeStatementIndex(bill?.statementIndex, statementAmounts)
+      : 0;
+  const effectiveAmount =
+    cadence === "statement-plan"
+      ? getStatementAmountAt(statementAmounts, statementIndex, bill?.amount)
+      : Math.max(0, Number(bill?.amount || 0));
+  const basePlan =
+    cadence === "statement-plan"
+      ? normalizePlan(statementAmounts.length, bill?.paidMonths)
+      : normalizePlan(bill?.totalMonths, bill?.paidMonths);
+
+  const fullyPaidCurrentCycle =
+    effectiveAmount > 0 &&
+    normalizeCyclePaidAmount(bill?.cyclePaidAmount, effectiveAmount) >=
+      effectiveAmount;
+  const paidMonthsFromProgress =
+    cadence === "statement-plan"
+      ? statementIndex + (fullyPaidCurrentCycle ? 1 : 0)
+      : basePlan.paidMonths;
+  const plan = {
+    totalMonths: basePlan.totalMonths,
+    paidMonths:
+      basePlan.totalMonths > 0
+        ? Math.min(
+            basePlan.totalMonths,
+            Math.max(basePlan.paidMonths, paidMonthsFromProgress)
+          )
+        : 0,
+  };
+
   return {
     ...bill,
-    cadence: normalizeCadence(bill?.cadence),
+    amount: effectiveAmount,
+    cadence,
+    statementAmounts,
+    statementIndex,
     reminderDays: normalizeReminderDays(bill?.reminderDays),
     totalMonths: plan.totalMonths,
     paidMonths: plan.paidMonths,
@@ -261,7 +434,10 @@ function normalizeBillShape(bill) {
         }))
       : [],
     archived: Boolean(bill?.archived),
-    cyclePaidAmount: normalizeCyclePaidAmount(bill?.cyclePaidAmount, bill?.amount),
+    cyclePaidAmount: normalizeCyclePaidAmount(
+      bill?.cyclePaidAmount,
+      effectiveAmount
+    ),
     reminderSnooze:
       bill?.reminderSnooze && typeof bill.reminderSnooze === "object"
         ? bill.reminderSnooze
@@ -309,6 +485,8 @@ function isCountedPayment(payment) {
 export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
   const safeDueDate = typeof bill?.dueDate === "string" ? bill.dueDate : toISODate(startOfToday());
   const safeCadence = bill?.cadence || "monthly";
+  const isOneTime = safeCadence === "one-time";
+  const isStatementPlan = safeCadence === "statement-plan";
   const totalMonths = Math.max(0, Number(bill?.totalMonths || 0));
   const cycleAmount = Math.max(0, Number(bill?.amount || 0));
   const currentPaidMonths = totalMonths > 0 ? Math.max(0, Number(bill?.paidMonths || 0)) : 0;
@@ -319,12 +497,93 @@ export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
     return sum + normalizeSettledCycles(payment?.settledCycles);
   }, 0);
 
+  if (isStatementPlan) {
+    const statementAmounts = normalizeStatementAmounts(
+      bill?.statementAmounts,
+      cycleAmount
+    );
+    const safeStatementAmounts =
+      statementAmounts.length > 0 ? statementAmounts : [cycleAmount];
+    const totalStatementCount = safeStatementAmounts.length;
+    const rewindSteps = -previousSettledCycles;
+    const baseDueDate = shiftDueDateByCadence(safeDueDate, "monthly", rewindSteps);
+    const basePaidMonths =
+      totalStatementCount > 0
+        ? Math.max(0, Math.min(totalStatementCount, currentPaidMonths - previousSettledCycles))
+        : 0;
+
+    const incomingPayments = Array.isArray(nextPaymentsRaw) ? nextPaymentsRaw : [];
+    let statementIndex = 0;
+    let activeCycleAmount = getStatementAmountAt(
+      safeStatementAmounts,
+      statementIndex,
+      cycleAmount
+    );
+    let carry = 0;
+    let totalSettledCycles = 0;
+    let nextDueDate = baseDueDate;
+
+    const replayed = sortPaymentsAsc(incomingPayments).map((payment) => {
+      const amount = Math.max(0, Number(payment?.amount || 0));
+      let settledCycles = 0;
+
+      if (isCountedPayment({ ...payment, amount }) && activeCycleAmount > 0) {
+        carry += amount;
+        while (carry >= activeCycleAmount) {
+          carry -= activeCycleAmount;
+          settledCycles += 1;
+
+          if (statementIndex < safeStatementAmounts.length - 1) {
+            statementIndex += 1;
+            nextDueDate = shiftDueDateByCadence(nextDueDate, "monthly", 1);
+            activeCycleAmount = getStatementAmountAt(
+              safeStatementAmounts,
+              statementIndex,
+              cycleAmount
+            );
+          } else {
+            carry = 0;
+            break;
+          }
+        }
+      }
+
+      totalSettledCycles += settledCycles;
+      return {
+        ...payment,
+        amount,
+        settledCycles: normalizeSettledCycles(settledCycles),
+      };
+    });
+
+    const atLastStatement = statementIndex >= safeStatementAmounts.length - 1;
+    const nextCyclePaidAmount =
+      atLastStatement && totalSettledCycles > 0 && carry === 0
+        ? activeCycleAmount
+        : normalizeCyclePaidAmount(carry, activeCycleAmount);
+
+    const nextPaidMonths =
+      totalStatementCount > 0
+        ? Math.min(totalStatementCount, basePaidMonths + totalSettledCycles)
+        : 0;
+
+    return {
+      ...bill,
+      dueDate: nextDueDate,
+      amount: activeCycleAmount,
+      statementAmounts: safeStatementAmounts,
+      statementIndex,
+      totalMonths: totalStatementCount,
+      paidMonths: nextPaidMonths,
+      cyclePaidAmount: nextCyclePaidAmount,
+      payments: sortPaymentsDesc(replayed),
+    };
+  }
+
   // Rewind old settled cycles, then replay edited payments for consistent due/cycle state.
-  const baseDueDate = shiftDueDateByCadence(
-    safeDueDate,
-    safeCadence,
-    -previousSettledCycles
-  );
+  const baseDueDate = isOneTime
+    ? safeDueDate
+    : shiftDueDateByCadence(safeDueDate, safeCadence, -previousSettledCycles);
   const basePaidMonths = totalMonths > 0
     ? Math.max(0, currentPaidMonths - previousSettledCycles)
     : 0;
@@ -339,9 +598,16 @@ export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
 
     if (isCountedPayment({ ...payment, amount }) && cycleAmount > 0) {
       carry += amount;
-      while (carry >= cycleAmount) {
-        carry -= cycleAmount;
-        settledCycles += 1;
+      if (isOneTime) {
+        if (totalSettledCycles === 0 && carry >= cycleAmount) {
+          settledCycles = 1;
+        }
+        carry = Math.min(carry, cycleAmount);
+      } else {
+        while (carry >= cycleAmount) {
+          carry -= cycleAmount;
+          settledCycles += 1;
+        }
       }
     }
 
@@ -353,11 +619,9 @@ export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
     };
   });
 
-  const nextDueDate = shiftDueDateByCadence(
-    baseDueDate,
-    safeCadence,
-    totalSettledCycles
-  );
+  const nextDueDate = isOneTime
+    ? baseDueDate
+    : shiftDueDateByCadence(baseDueDate, safeCadence, totalSettledCycles);
   const nextPaidMonths = totalMonths > 0
     ? Math.min(totalMonths, basePaidMonths + totalSettledCycles)
     : 0;
@@ -457,6 +721,13 @@ export function deletePaymentFromBill(bill, paymentId) {
   if (!target) return bill;
 
   const nextPayments = payments.filter((p) => p.id !== paymentId);
+
+  if (bill?.cadence === "one-time" || bill?.cadence === "statement-plan") {
+    return syncSeedPaidHistory(
+      recalculateBillCycleFromPayments(bill, nextPayments)
+    );
+  }
+
   const countedPayment = isCountedPayment(target);
 
   if (!countedPayment) {
@@ -632,16 +903,32 @@ export function useBills() {
   }, []);
 
   function addBill(data) {
-    const plan = normalizePlan(data.totalMonths, data.paidMonths);
+    const cadence = normalizeCadence(data.cadence);
+    const statementAmounts =
+      cadence === "statement-plan"
+        ? normalizeStatementAmounts(data.statementAmounts, data.amount)
+        : [];
+    const statementIndex = 0;
+    const isStatementPlan = cadence === "statement-plan";
+    const statementAmount = getStatementAmountAt(
+      statementAmounts,
+      statementIndex,
+      data.amount
+    );
+    const plan = isStatementPlan
+      ? normalizePlan(statementAmounts.length, 0)
+      : normalizePlan(data.totalMonths, data.paidMonths);
     const bill = syncSeedPaidHistory({
       id: crypto.randomUUID(),
       name: data.name.trim(),
       category: data.category || "Other",
       dueDate: data.dueDate,
-      amount: Number(data.amount || 0),
+      amount: isStatementPlan ? statementAmount : Number(data.amount || 0),
       notes: data.notes || "",
       payments: [],
-      cadence: normalizeCadence(data.cadence),
+      cadence,
+      statementAmounts,
+      statementIndex,
       reminderDays: normalizeReminderDays(data.reminderDays),
       totalMonths: plan.totalMonths,
       paidMonths: plan.paidMonths,
@@ -651,26 +938,46 @@ export function useBills() {
   }
 
   function updateBill(id, data) {
-    const plan = normalizePlan(data.totalMonths, data.paidMonths);
+    const cadence = normalizeCadence(data.cadence);
     setBills((prev) =>
       prev.map((b) =>
         b.id === id
-          ? syncSeedPaidHistory({
-              ...b,
-              name: data.name.trim(),
-              category: data.category || "Other",
-              dueDate: data.dueDate,
-              amount: Number(data.amount || 0),
-              notes: data.notes || "",
-              cadence: normalizeCadence(data.cadence),
-              reminderDays: normalizeReminderDays(data.reminderDays),
-              totalMonths: plan.totalMonths,
-              paidMonths: plan.paidMonths,
-              cyclePaidAmount: normalizeCyclePaidAmount(
-                b.cyclePaidAmount,
-                Number(data.amount || 0)
-              ),
-            })
+          ? (() => {
+              const isStatementPlan = cadence === "statement-plan";
+              const statementAmounts = isStatementPlan
+                ? normalizeStatementAmounts(data.statementAmounts, data.amount)
+                : [];
+              const statementIndex = isStatementPlan
+                ? b.cadence === "statement-plan"
+                  ? normalizeStatementIndex(b.statementIndex, statementAmounts)
+                  : 0
+                : 0;
+              const nextAmount = isStatementPlan
+                ? getStatementAmountAt(statementAmounts, statementIndex, data.amount)
+                : Number(data.amount || 0);
+              const plan = isStatementPlan
+                ? normalizePlan(statementAmounts.length, b.paidMonths)
+                : normalizePlan(data.totalMonths, data.paidMonths);
+
+              return syncSeedPaidHistory({
+                ...b,
+                name: data.name.trim(),
+                category: data.category || "Other",
+                dueDate: data.dueDate,
+                amount: nextAmount,
+                notes: data.notes || "",
+                cadence,
+                statementAmounts,
+                statementIndex,
+                reminderDays: normalizeReminderDays(data.reminderDays),
+                totalMonths: plan.totalMonths,
+                paidMonths: plan.paidMonths,
+                cyclePaidAmount: normalizeCyclePaidAmount(
+                  b.cyclePaidAmount,
+                  nextAmount
+                ),
+              });
+            })()
           : b
       )
     );
@@ -691,10 +998,29 @@ export function useBills() {
       const source = prev.find((b) => b.id === id);
       if (!source) return prev;
 
+      const statementAmounts =
+        source.cadence === "statement-plan"
+          ? normalizeStatementAmounts(source.statementAmounts, source.amount)
+          : [];
+      const statementIndex = 0;
+      const amount =
+        source.cadence === "statement-plan"
+          ? getStatementAmountAt(statementAmounts, statementIndex, source.amount)
+          : source.amount;
+      const totalMonths =
+        source.cadence === "statement-plan"
+          ? statementAmounts.length
+          : Number(source.totalMonths || 0);
+
       const copy = syncSeedPaidHistory({
         ...source,
         id: crypto.randomUUID(),
         name: `${source.name} (copy)`,
+        amount,
+        statementAmounts,
+        statementIndex,
+        totalMonths,
+        paidMonths: 0,
         archived: false,
         reminderSnooze: null,
         cyclePaidAmount: 0,

@@ -5,12 +5,42 @@ import {
   startOfToday,
   toISODate,
 } from "../../../lib/date/date.js";
-import { computeBillMeta } from "../billsUtils.js";
+import { computeBillMeta, shiftDueDateByCadence } from "../billsUtils.js";
 const { useEffect } = React;
 
 function formatCadenceLabel(cadence) {
+  if (cadence === "one-time") return "One-time";
+  if (cadence === "statement-plan") return "Statement plan";
   const raw = String(cadence || "monthly");
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function buildStatementTimeline(bill, limit = 8) {
+  if (bill?.cadence !== "statement-plan") return [];
+  const statementAmounts = Array.isArray(bill?.statementAmounts)
+    ? bill.statementAmounts
+        .map((n) => Number(n))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+  if (statementAmounts.length === 0) return [];
+
+  const currentIndex = Math.max(
+    0,
+    Math.min(
+      Number.isFinite(Number(bill?.statementIndex))
+        ? Math.floor(Number(bill.statementIndex))
+        : 0,
+      statementAmounts.length - 1
+    )
+  );
+
+  return statementAmounts
+    .slice(currentIndex, currentIndex + limit)
+    .map((amount, offset) => ({
+      key: `${currentIndex + offset}`,
+      dueDate: shiftDueDateByCadence(bill.dueDate, "monthly", offset),
+      amount: Number(amount),
+    }));
 }
 
 function buildPaymentDraft(bill) {
@@ -42,6 +72,10 @@ export default function BillDetailsDialog({
 }) {
   // Hooks must always run (even if open is false)
   const meta = useMemo(() => (bill ? computeBillMeta(bill) : null), [bill]);
+  const statementTimeline = useMemo(
+    () => (bill ? buildStatementTimeline(bill) : []),
+    [bill]
+  );
 
   const [tab, setTab] = useState("overview");
   const [paymentDraft, setPaymentDraft] = useState(() =>
@@ -190,7 +224,9 @@ export default function BillDetailsDialog({
                   <Stat
                     label="Due status"
                     value={
-                      meta?.overdue
+                      meta?.settledInFull
+                        ? "Paid in full"
+                        : meta?.overdue
                         ? `${Math.abs(meta.daysToDue)} days late`
                         : meta?.daysToDue === 0
                         ? "Due today"
@@ -211,10 +247,38 @@ export default function BillDetailsDialog({
                   />
                 </div>
 
+                {statementTimeline.length > 0 ? (
+                  <div className="cardInner">
+                    <div className="bold">Upcoming statements</div>
+                    <div className="muted small">
+                      Variable monthly amounts. Current month is first.
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      {statementTimeline.map((item) => (
+                        <div
+                          key={item.key}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            padding: "6px 0",
+                          }}
+                        >
+                          <span>{formatShortDate(item.dueDate)}</span>
+                          <span className="bold">{formatMoney(item.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="rowGap billOverviewFoot">
                   <div className="muted billOverviewHint">
-                    Mark paid adds a payment and advances the due date to the
-                    next cycle. If a plan is set, paid months also increases.
+                    {bill.cadence === "statement-plan"
+                      ? "Mark paid applies to the current statement. Full payment moves to next statement amount."
+                      : bill.cadence === "one-time"
+                      ? "Mark paid adds a payment and closes this one-time bill when the full amount is covered."
+                      : "Mark paid adds a payment and advances the due date to the next cycle. If a plan is set, paid months also increases."}
                   </div>
                   <div className="actions billOverviewActions">
                     <button
@@ -332,8 +396,11 @@ export default function BillDetailsDialog({
                 <div className="cardInner">
                   <div className="bold">Add payment</div>
                   <div className="muted small">
-                    Adds a payment record. Due date advances only after the
-                    cycle balance is fully paid.
+                    {bill.cadence === "statement-plan"
+                      ? "Adds a payment record. Once statement amount is fully paid, due date moves to the next month's statement."
+                      : bill.cadence === "one-time"
+                      ? "Adds a payment record. This one-time bill stays complete once the full amount is paid."
+                      : "Adds a payment record. Due date advances only after the cycle balance is fully paid."}
                   </div>
 
                   {/* âœ… Responsive grid to prevent overflow */}

@@ -15,6 +15,10 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
+import {
+  deleteCreatedAccountIfNeeded,
+  ensureAuthenticatedSession,
+} from "./_e2e-account-session.mjs";
 
 const HOST = "127.0.0.1";
 const NPM_EXEC_PATH = String(process.env.npm_execpath || "").trim();
@@ -28,6 +32,8 @@ const VIEWPORTS = [
   { name: "iPhone 12/13", width: 390, height: 844 },
   { name: "Desktop", width: 1366, height: 768 },
 ];
+const E2E_UNLOCK_KEY = "__bills_e2e_unlock_session_v1";
+const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
 
 function selectViewports() {
   const raw = String(process.env.OFFLINE_VIEWPORTS || "").trim();
@@ -239,14 +245,16 @@ async function waitForAssertion(assertion, label, timeoutMs = 10_000) {
 
 async function seedData(page) {
   const payload = seedPayload();
-  await page.evaluate((data) => {
+  await page.evaluate(({ data, unlockKey, knownKey }) => {
     localStorage.clear();
     localStorage.setItem("bills_manager_v1", JSON.stringify(data));
     localStorage.setItem("bills_notify_enabled", "false");
     localStorage.setItem("bills_compact_mode", "false");
     localStorage.setItem("bills_table_density", "comfortable");
     localStorage.setItem("bills_notify_mode", "digest");
-  }, payload);
+    localStorage.setItem(unlockKey, "1");
+    localStorage.setItem(knownKey, "1");
+  }, { data: payload, unlockKey: E2E_UNLOCK_KEY, knownKey: ACCOUNT_KNOWN_KEY });
 }
 
 async function getBillRowCount(page) {
@@ -256,11 +264,44 @@ async function getBillRowCount(page) {
     .count();
 }
 
-async function waitForAppReady(page) {
+async function waitForAppReady(page, { allowLocked = false } = {}) {
+  if (allowLocked) {
+    await waitForAssertion(async () => {
+      const shellReady = await page.evaluate(() => {
+        const hasTracker = Boolean(
+          document.querySelector('[data-testid="bills-tracker-title"]')
+        );
+        const hasTrackerHeading = Array.from(document.querySelectorAll("h2")).some(
+          (node) => node.textContent?.trim() === "Bills Tracker"
+        );
+        const hasAccountLock = Boolean(
+          document.querySelector('[data-testid="account-locked-card"]')
+        );
+        return hasTracker || hasTrackerHeading || hasAccountLock;
+      });
+      assert.equal(shellReady, true);
+    }, "app shell ready", 12_000);
+    return;
+  }
+
+  const trackerTitle = page.getByTestId("bills-tracker-title").first();
+  if ((await trackerTitle.count()) > 0) {
+    await trackerTitle.waitFor({
+      state: "visible",
+      timeout: 12_000,
+    });
+    return;
+  }
   await page.locator('h2:has-text("Bills Tracker")').first().waitFor({
     state: "visible",
     timeout: 12_000,
   });
+}
+
+async function isAccountLockedVisible(page) {
+  return page.evaluate(
+    () => Boolean(document.querySelector('[data-testid="account-locked-card"]'))
+  );
 }
 
 async function ensureServiceWorkerControl(page) {
@@ -277,7 +318,15 @@ async function ensureServiceWorkerControl(page) {
 }
 
 async function openAndCloseSettings(page) {
-  await page.locator('button[aria-label="Open settings"]:visible').first().click();
+  const desktopSettingsButton = page.getByTestId("open-settings-button-desktop").first();
+  const mobileSettingsButton = page.getByTestId("open-settings-button-mobile").first();
+  if ((await desktopSettingsButton.count()) > 0 && (await desktopSettingsButton.isVisible())) {
+    await desktopSettingsButton.click();
+  } else if ((await mobileSettingsButton.count()) > 0 && (await mobileSettingsButton.isVisible())) {
+    await mobileSettingsButton.click();
+  } else {
+    await page.locator('button[aria-label="Open settings"]:visible').first().click();
+  }
   const settingsModal = page.locator(".settingsModal").first();
   await settingsModal.waitFor({ state: "visible", timeout: 10_000 });
   await page.locator('button[aria-label="Close settings"]:visible').first().click();
@@ -335,13 +384,61 @@ async function runViewportCheck(browser, viewport, baseUrl) {
   });
 
   const page = await context.newPage();
+  const host = String(new URL(baseUrl).hostname || "").toLowerCase();
+  const isLocalhostHost =
+    host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  const requireExternalAccount =
+    !isLocalhostHost && String(process.env.E2E_REQUIRE_ACCOUNT || "").trim() === "1";
+  let createdAccount = { created: false, password: "" };
+
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await waitForAppReady(page);
+    if (!isLocalhostHost) {
+      const authResult = await ensureAuthenticatedSession(page, {
+        label: `offline-${viewport.width}x${viewport.height}`,
+        strict: requireExternalAccount,
+      });
+      if (authResult.status !== "pass") {
+        if (authResult.status === "fail") {
+          return {
+            ...viewport,
+            status: "fail",
+            error: authResult.reason,
+          };
+        }
+        return {
+          ...viewport,
+          status: "skip",
+          note: `Offline bill-flow checks skipped: ${authResult.reason}`,
+        };
+      }
+      createdAccount = authResult;
+    }
+
+    await waitForAppReady(page, { allowLocked: true });
 
     await seedData(page);
     await page.reload({ waitUntil: "domcontentloaded" });
-    await waitForAppReady(page);
+    try {
+      await waitForAppReady(page);
+    } catch (error) {
+      if (!isLocalhostHost && (await isAccountLockedVisible(page))) {
+        const note = "Offline bill-flow checks skipped: deployed app remained account-locked.";
+        if (requireExternalAccount) {
+          return {
+            ...viewport,
+            status: "fail",
+            error: note,
+          };
+        }
+        return {
+          ...viewport,
+          status: "skip",
+          note,
+        };
+      }
+      throw error;
+    }
 
     const onlineRows = await getBillRowCount(page);
     assert.ok(onlineRows > 0, `${viewport.name}: expected at least one seeded bill online`);
@@ -351,9 +448,6 @@ async function runViewportCheck(browser, viewport, baseUrl) {
     await detailsOnline.locator('button[aria-label="Close"]').first().click();
     await detailsOnline.waitFor({ state: "hidden", timeout: 10_000 });
 
-    const host = String(new URL(baseUrl).hostname || "").toLowerCase();
-    const isLocalhostHost =
-      host === "localhost" || host === "127.0.0.1" || host === "[::1]";
     const requireSwInLocalPreview = String(process.env.OFFLINE_REQUIRE_SW || "").trim() === "1";
     const canSkipWhenNoSw = isLocalhostHost && !requireSwInLocalPreview;
 
@@ -398,11 +492,24 @@ async function runViewportCheck(browser, viewport, baseUrl) {
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
+    await deleteCreatedAccountIfNeeded(page, createdAccount);
     await context.close();
   }
 }
 
 async function main() {
+  const offlinePolicy = String(process.env.OFFLINE_POLICY || "disabled")
+    .trim()
+    .toLowerCase();
+  const shouldRunOfflineSmoke =
+    offlinePolicy === "supported" || offlinePolicy === "enabled" || offlinePolicy === "on";
+  if (!shouldRunOfflineSmoke) {
+    console.log(
+      `Offline readiness checks skipped by policy (OFFLINE_POLICY=${offlinePolicy || "disabled"}).`
+    );
+    return;
+  }
+
   const externalBaseUrlRaw = String(process.env.OFFLINE_BASE_URL || "").trim();
   const isExternalRun = externalBaseUrlRaw.length > 0;
   const baseUrl = isExternalRun

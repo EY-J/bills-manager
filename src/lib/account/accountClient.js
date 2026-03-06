@@ -106,28 +106,6 @@ export async function getAccountSession() {
   });
 }
 
-export async function requestSignupCode(email) {
-  return requestJson("/api/account-auth", {
-    method: "POST",
-    body: JSON.stringify({
-      action: "request-signup-code",
-      email,
-    }),
-  });
-}
-
-export async function completeSignup({ email, password, code }) {
-  return requestJson("/api/account-auth", {
-    method: "POST",
-    body: JSON.stringify({
-      action: "complete-signup",
-      email,
-      password,
-      code,
-    }),
-  });
-}
-
 export async function createAccount({ email, password, challengeToken = "", challengeAnswer = "" }) {
   return requestJson("/api/account-auth", {
     method: "POST",
@@ -137,27 +115,6 @@ export async function createAccount({ email, password, challengeToken = "", chal
       password,
       challengeToken,
       challengeAnswer,
-    }),
-  });
-}
-
-export async function requestPasswordResetCode(email) {
-  return requestJson("/api/account-auth", {
-    method: "POST",
-    body: JSON.stringify({
-      action: "request-password-reset-link",
-      email,
-    }),
-  });
-}
-
-export async function completePasswordReset({ token, password }) {
-  return requestJson("/api/account-auth", {
-    method: "POST",
-    body: JSON.stringify({
-      action: "complete-password-reset",
-      token,
-      password,
     }),
   });
 }

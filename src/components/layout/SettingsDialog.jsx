@@ -330,7 +330,7 @@ export default function SettingsDialog({
                     <li>Install app: Android (Chrome menu to Install app), iPhone (Safari Share to Add to Home Screen).</li>
                     <li>Create one test bill and one payment entry.</li>
                     <li>Close and reopen the app; verify the same data is still there.</li>
-                    <li>Turn on airplane mode and reopen app; verify bills are still visible offline.</li>
+                    <li>Reconnect online and verify your latest synced data is still available.</li>
                     <li>Use Backup data, then clear/restore using Restore data; verify records come back correctly.</li>
                   </ol>
                   {!canInstall ? (

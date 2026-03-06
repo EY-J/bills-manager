@@ -6,7 +6,9 @@
 //   name: string,
 //   category: string,
 //   dueDate: "YYYY-MM-DD",
-//   cadence: "monthly" | "bi-weekly" | "weekly",
+//   cadence: "monthly" | "bi-weekly" | "weekly" | "one-time" | "statement-plan",
+//   statementAmounts?: number[], // ordered monthly statement amounts for statement-plan
+//   statementIndex?: number, // current statement position
 //   reminderDays: 1 | 3 | 7,
 //   amount: number,
 //   notes: string,

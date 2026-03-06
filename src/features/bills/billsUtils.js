@@ -1,6 +1,12 @@
 import { addMonthsKeepDay, parseISODate, startOfToday, toISODate } from "../../lib/date/date.js";
 
-export const BILL_CADENCE_OPTIONS = ["monthly", "bi-weekly", "weekly"];
+export const BILL_CADENCE_OPTIONS = [
+  "monthly",
+  "bi-weekly",
+  "weekly",
+  "one-time",
+  "statement-plan",
+];
 export const BILL_REMINDER_OPTIONS = [1, 3, 7];
 
 function cadenceDays(cadence) {
@@ -22,11 +28,31 @@ export function computeBillMeta(bill) {
   const reminderDays = BILL_REMINDER_OPTIONS.includes(Number(bill?.reminderDays))
     ? Number(bill.reminderDays)
     : 3;
-  const overdue = daysToDue < 0;
-  const dueSoon = daysToDue >= 0 && daysToDue <= reminderDays;
   const cycleAmount = Math.max(0, Number(bill?.amount || 0));
   const cyclePaidAmount = Math.max(0, Number(bill?.cyclePaidAmount || 0));
   const remainingAmount = Math.max(cycleAmount - cyclePaidAmount, 0);
+  const isStatementPlan = bill?.cadence === "statement-plan";
+  const statementAmounts = Array.isArray(bill?.statementAmounts)
+    ? bill.statementAmounts.filter((n) => Number.isFinite(Number(n)) && Number(n) > 0)
+    : [];
+  const statementIndex = Math.max(
+    0,
+    Math.min(
+      Number.isFinite(Number(bill?.statementIndex))
+        ? Math.floor(Number(bill.statementIndex))
+        : 0,
+      Math.max(statementAmounts.length - 1, 0)
+    )
+  );
+  const isStatementPlanLastCycle =
+    isStatementPlan &&
+    statementAmounts.length > 0 &&
+    statementIndex >= statementAmounts.length - 1;
+  const settledInFull =
+    (bill?.cadence === "one-time" && cycleAmount > 0 && remainingAmount <= 0) ||
+    (isStatementPlan && isStatementPlanLastCycle && cycleAmount > 0 && remainingAmount <= 0);
+  const overdue = !settledInFull && daysToDue < 0;
+  const dueSoon = !settledInFull && daysToDue >= 0 && daysToDue <= reminderDays;
   const partiallyPaid = cyclePaidAmount > 0 && remainingAmount > 0;
 
   // months pending = ceil of month distance when overdue
@@ -42,6 +68,7 @@ export function computeBillMeta(bill) {
     cycleAmount,
     cyclePaidAmount,
     remainingAmount,
+    settledInFull,
     partiallyPaid,
     monthsPending,
     lastPaid,
@@ -79,6 +106,12 @@ export function advanceDueDateOneMonth(isoDueDate) {
 export function shiftDueDateByCadence(isoDueDate, cadence = "monthly", steps = 1) {
   const safeSteps = Number(steps || 0);
   if (!safeSteps) return isoDueDate;
+  if (cadence === "one-time" || cadence === "statement-plan") {
+    if (cadence === "statement-plan") {
+      return addMonthsKeepDay(isoDueDate, safeSteps);
+    }
+    return isoDueDate;
+  }
 
   if (cadence === "monthly") {
     return addMonthsKeepDay(isoDueDate, safeSteps);

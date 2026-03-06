@@ -1,6 +1,12 @@
 import React from "react";
 
-export default function Header({ onAdd, onOpenSettings, onOpenAccount, accountSignedIn }) {
+export default function Header({
+  onAdd,
+  onOpenSettings,
+  onOpenAccount,
+  onOpenCalendar,
+  accountSignedIn,
+}) {
   return (
     <div className="header">
       <div className="headerInner">
@@ -8,6 +14,7 @@ export default function Header({ onAdd, onOpenSettings, onOpenAccount, accountSi
           type="button"
           className="mobileMenuBtn settingsIconBtn"
           aria-label="Open settings"
+          data-testid="open-settings-button-mobile"
           onClick={onOpenSettings}
         >
           <svg
@@ -35,6 +42,7 @@ export default function Header({ onAdd, onOpenSettings, onOpenAccount, accountSi
           type="button"
           className="mobileAddBtn"
           aria-label="Add new bill"
+          data-testid="add-bill-quick-button"
           onClick={onAdd}
         >
           <svg
@@ -53,10 +61,32 @@ export default function Header({ onAdd, onOpenSettings, onOpenAccount, accountSi
         <div className="headerActions">
           <button
             type="button"
+            className="btn headerBtn desktopActionsBtn settingsIconBtn"
+            aria-label="Open due date calendar"
+            data-testid="open-calendar-button"
+            onClick={onOpenCalendar}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+              <path d="M7.5 3.5v3M16.5 3.5v3M3.5 9.5h17" />
+              <path d="M8.5 13h2M13.5 13h2M8.5 17h2" />
+            </svg>
+          </button>
+          <button
+            type="button"
             className={`btn headerBtn desktopActionsBtn settingsIconBtn accountIconBtn ${
               accountSignedIn ? "isSignedIn" : ""
             }`}
             aria-label={accountSignedIn ? "Open account (signed in)" : "Open account"}
+            data-testid="open-account-button"
             onClick={onOpenAccount}
           >
             <svg
@@ -76,6 +106,7 @@ export default function Header({ onAdd, onOpenSettings, onOpenAccount, accountSi
             type="button"
             className="btn headerBtn desktopActionsBtn settingsIconBtn"
             aria-label="Open settings"
+            data-testid="open-settings-button-desktop"
             onClick={onOpenSettings}
           >
             <svg

@@ -19,7 +19,6 @@ import {
   validateBackupPayload,
 } from "../features/bills/billsService.js";
 import {
-  completePasswordReset,
   completePasswordResetWithRecoveryCode,
   createAccount,
   deleteAccount,
@@ -42,6 +41,7 @@ const SettingsDialog = lazy(() => import("../components/layout/SettingsDialog.js
 const AccountDialog = lazy(() => import("../components/layout/AccountDialog.jsx"));
 const BillEditorDialog = lazy(() => import("../features/bills/components/BillEditorDialog.jsx"));
 const BillDetailsDialog = lazy(() => import("../features/bills/components/BillDetailsDialog.jsx"));
+const CalendarDialog = lazy(() => import("../features/bills/components/CalendarDialog.jsx"));
 
 const MAX_RESTORE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB guard against UI freeze on huge imports.
 const STORAGE_WARNING_MESSAGE = "Storage unavailable. Changes may not persist.";
@@ -51,6 +51,101 @@ const LAST_BACKUP_AT_KEY = "bills_last_backup_at";
 const LAST_ACCOUNT_SYNC_AT_KEY = "bills_last_account_sync_at";
 const ACCOUNT_AUTO_SYNC_KEY = "bills_account_auto_sync";
 const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
+const ACCOUNT_E2E_LOCAL_SESSION_KEY = "__bills_e2e_unlock_session_v1";
+const ACCOUNT_PREVIEW_ROTATE_MS = 4200;
+const ACCOUNT_FEATURE_PREVIEWS = [
+  {
+    id: "tracker",
+    badge: "Bills Tracker",
+    title: "Track recurring and one-time bills",
+    text: "Stay on top of every due date with quick status visibility.",
+    statValue: "14",
+    statLabel: "Active bills",
+    rows: [
+      { label: "Rent", status: "Due soon", tone: "soon" },
+      { label: "Water bill", status: "Overdue", tone: "danger" },
+      { label: "Internet", status: "Paid", tone: "ok" },
+    ],
+  },
+  {
+    id: "calendar",
+    badge: "Due Calendar",
+    title: "See due dates in a calendar view",
+    text: "Scan the month and spot overdue or due-today bills faster.",
+    statValue: "6",
+    statLabel: "This month",
+    rows: [
+      { label: "Feb 12", status: "2 bills", tone: "soon" },
+      { label: "Feb 18", status: "Due today", tone: "today" },
+      { label: "Feb 26", status: "Cleared", tone: "ok" },
+    ],
+  },
+  {
+    id: "payments",
+    badge: "Payments",
+    title: "Record full or partial payments",
+    text: "Keep payment history per bill and instantly see remaining balance.",
+    statValue: "36",
+    statLabel: "Payment logs",
+    rows: [
+      { label: "Electric bill", status: "Partial", tone: "partial" },
+      { label: "Car loan", status: "P1,250 posted", tone: "ok" },
+      { label: "Receipt note", status: "Saved", tone: "neutral" },
+    ],
+  },
+  {
+    id: "plans",
+    badge: "Flexible Plans",
+    title: "Handle one-time and statement-plan dues",
+    text: "Track debts, pay-later plans, and changing monthly amounts in one place.",
+    statValue: "4",
+    statLabel: "Plan bills",
+    rows: [
+      { label: "Phone loan", status: "Statement plan", tone: "neutral" },
+      { label: "Friend debt", status: "One-time", tone: "soon" },
+      { label: "Next due", status: "Apr 25", tone: "today" },
+    ],
+  },
+  {
+    id: "insights",
+    badge: "Insights",
+    title: "Spot risks early with status totals",
+    text: "Use due-soon and overdue views to prioritize what to pay first.",
+    statValue: "3",
+    statLabel: "Overdue",
+    rows: [
+      { label: "Overdue", status: "3 bills", tone: "danger" },
+      { label: "Due soon", status: "5 bills", tone: "soon" },
+      { label: "Paid this month", status: "P12,450", tone: "ok" },
+    ],
+  },
+  {
+    id: "sync",
+    badge: "Account Sync",
+    title: "Keep data synced across devices",
+    text: "Sign in once to use Pocket Ledger on phone and web with the same records.",
+    statValue: "2",
+    statLabel: "Devices linked",
+    rows: [
+      { label: "Phone", status: "Synced", tone: "ok" },
+      { label: "Web app", status: "Synced", tone: "ok" },
+      { label: "Last update", status: "Just now", tone: "neutral" },
+    ],
+  },
+  {
+    id: "safety",
+    badge: "Backup & Recovery",
+    title: "Protect your data and recover access",
+    text: "Use export backup and recovery code reset to avoid data loss and lockout.",
+    statValue: "100%",
+    statLabel: "You control it",
+    rows: [
+      { label: "Backup export", status: "JSON ready", tone: "ok" },
+      { label: "Recovery code", status: "Reset access", tone: "today" },
+      { label: "Account sync", status: "Cross-device", tone: "neutral" },
+    ],
+  },
+];
 
 function parseRetrySecondsFromMessage(message) {
   const value = String(message || "");
@@ -77,21 +172,6 @@ function extractChallengeFromError(errorLike) {
   };
 }
 
-function extractResetTokenFromLink(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsed = new URL(raw);
-    return String(
-      parsed.searchParams.get("resetToken") ||
-        parsed.searchParams.get("passwordResetToken") ||
-        ""
-    ).trim();
-  } catch {
-    return "";
-  }
-}
-
 function isErrorNoticeMessage(value) {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return false;
@@ -107,6 +187,29 @@ function isErrorNoticeMessage(value) {
     text.includes("not supported") ||
     text.includes("rate limit")
   );
+}
+
+function isLoopbackHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
+function readLocalE2EAccountSessionUser() {
+  if (typeof window === "undefined") return null;
+  if (!isLoopbackHost(window.location.hostname)) return null;
+
+  try {
+    if (localStorage.getItem(ACCOUNT_E2E_LOCAL_SESSION_KEY) !== "1") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return {
+    id: "local-e2e-session",
+    email: "qa@local.test",
+  };
 }
 
 export default function App() {
@@ -144,16 +247,20 @@ export default function App() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [accountEntryAuthMode, setAccountEntryAuthMode] = useState("signin");
-  const [accountResetToken, setAccountResetToken] = useState("");
   const [accountRecoveryCode, setAccountRecoveryCode] = useState("");
   const [hasKnownAccount, setHasKnownAccount] = useState(() => {
     try {
+      if (readLocalE2EAccountSessionUser()) {
+        return true;
+      }
       return localStorage.getItem(ACCOUNT_KNOWN_KEY) === "1";
     } catch {
       return false;
     }
   });
+  const [accountPreviewIndex, setAccountPreviewIndex] = useState(0);
   const [showSplash, setShowSplash] = useState(true);
   const [splashLeaving, setSplashLeaving] = useState(false);
   const [compactMode, setCompactMode] = useState(() => {
@@ -189,7 +296,7 @@ export default function App() {
       return "";
     }
   });
-  const [accountUser, setAccountUser] = useState(null);
+  const [accountUser, setAccountUser] = useState(() => readLocalE2EAccountSessionUser());
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountSyncBusy, setAccountSyncBusy] = useState(false);
   const [accountStorageMode, setAccountStorageMode] = useState("unknown");
@@ -225,11 +332,13 @@ export default function App() {
   const billsRef = useRef(null);
   const statsRef = useRef(null);
   const hasBlockingModal =
-    settingsOpen || accountOpen || editorOpen || detailsOpen || clearConfirmOpen;
+    settingsOpen || accountOpen || calendarOpen || editorOpen || detailsOpen || clearConfirmOpen;
   const currentUndoToast = undoQueue[0] || null;
   const queuedUndoCount = Math.max(undoQueue.length - 1, 0);
   const noticeToastIsError = isErrorNoticeMessage(noticeToast);
-  const showAccountOnboardingNudge = !accountUser?.id && !hasKnownAccount;
+  const accountRequired = !accountUser?.id;
+  const accountEntryMode = hasKnownAccount ? "signin" : "signup";
+  const accountPreviewCount = ACCOUNT_FEATURE_PREVIEWS.length;
 
   const markAccountAsKnown = useCallback(() => {
     setHasKnownAccount(true);
@@ -245,6 +354,37 @@ export default function App() {
     setAccountEntryAuthMode(nextMode);
     setAccountOpen(true);
   }, []);
+
+  useEffect(() => {
+    if (!accountRequired) return;
+    setSettingsOpen(false);
+    setCalendarOpen(false);
+    setEditorOpen(false);
+    setDetailsOpen(false);
+    setClearConfirmOpen(false);
+  }, [accountRequired]);
+
+  const showPrevAccountPreview = useCallback(() => {
+    setAccountPreviewIndex((current) =>
+      (current - 1 + accountPreviewCount) % accountPreviewCount
+    );
+  }, [accountPreviewCount]);
+
+  const showNextAccountPreview = useCallback(() => {
+    setAccountPreviewIndex((current) => (current + 1) % accountPreviewCount);
+  }, [accountPreviewCount]);
+
+  useEffect(() => {
+    if (!accountRequired || accountPreviewCount <= 1) return undefined;
+    const timer = window.setInterval(() => {
+      setAccountPreviewIndex((current) => (current + 1) % accountPreviewCount);
+    }, ACCOUNT_PREVIEW_ROTATE_MS);
+    return () => window.clearInterval(timer);
+  }, [accountRequired, accountPreviewCount]);
+
+  useEffect(() => {
+    if (!accountRequired) setAccountPreviewIndex(0);
+  }, [accountRequired]);
 
   const pushStorageWarning = useCallback((message) => {
     const now = Date.now();
@@ -567,26 +707,6 @@ export default function App() {
       );
       window.removeEventListener("appinstalled", handleAppInstalled);
     };
-  }, []);
-
-  useEffect(() => {
-    try {
-      const url = new URL(window.location.href);
-      const token = extractResetTokenFromLink(url.toString());
-      if (!token) return;
-
-      setAccountResetToken(token);
-      setAccountOpen(true);
-      setMobileTab("account");
-
-      url.searchParams.delete("resetToken");
-      url.searchParams.delete("passwordResetToken");
-      const next = `${url.pathname}${url.search}${url.hash}`;
-      window.history.replaceState({}, "", next || "/");
-      setNoticeToast("Enter your new password.");
-    } catch {
-      // Ignore malformed URL parsing failures.
-    }
   }, []);
 
   useEffect(() => {
@@ -1020,7 +1140,6 @@ export default function App() {
       }
       setAccountUser(result?.user || null);
       markAccountAsKnown();
-      setAccountResetToken("");
       await bootstrapAccountAfterSignIn({ silent: true });
       setNoticeToast("Password reset complete.");
 
@@ -1044,39 +1163,6 @@ export default function App() {
         message:
           error instanceof Error ? error.message : "Could not reset password with recovery code.",
       };
-    } finally {
-      setAccountBusy(false);
-    }
-  }
-
-  async function handleAccountResetVerify({ token, password }) {
-    const cleanToken = String(token || "").trim();
-    const cleanPassword = String(password || "");
-    if (!cleanToken || !cleanPassword) {
-      setNoticeToast("Enter your new password.");
-      return { ok: false };
-    }
-    if (accountBusy) return { ok: false };
-
-    setAccountBusy(true);
-    try {
-      const result = await completePasswordReset({
-        token: cleanToken,
-        password: cleanPassword,
-      });
-
-      setAccountUser(result?.user || null);
-      markAccountAsKnown();
-      if (result?.storageMode) {
-        setAccountStorageMode(result.storageMode);
-      }
-      setAccountResetToken("");
-      await bootstrapAccountAfterSignIn({ silent: true });
-      setNoticeToast("Password reset complete.");
-      return { ok: true };
-    } catch (error) {
-      setNoticeToast(error instanceof Error ? error.message : "Could not reset password.");
-      return { ok: false };
     } finally {
       setAccountBusy(false);
     }
@@ -1149,7 +1235,6 @@ export default function App() {
       setLastAccountSyncAt("");
       setHasKnownAccount(false);
       setAccountEntryAuthMode("signin");
-      setAccountResetToken("");
       setAccountOpen(false);
       try {
         localStorage.removeItem(ACCOUNT_KNOWN_KEY);
@@ -1549,16 +1634,33 @@ export default function App() {
   return (
     <div className={`app ${compactMode ? "compactMode" : ""} density-${tableDensity}`}>
       <Header
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenAccount={() => openAccountDialog("signin")}
+        onOpenSettings={() => {
+          if (accountRequired) {
+            openAccountDialog(accountEntryMode);
+            return;
+          }
+          setSettingsOpen(true);
+        }}
+        onOpenAccount={() => openAccountDialog(accountRequired ? accountEntryMode : "signin")}
+        onOpenCalendar={() => {
+          if (accountRequired) {
+            openAccountDialog(accountEntryMode);
+            return;
+          }
+          setCalendarOpen(true);
+        }}
         accountSignedIn={Boolean(accountUser?.id)}
         onAdd={() => {
+          if (accountRequired) {
+            openAccountDialog(accountEntryMode);
+            return;
+          }
           setEditingId(null);
           setEditorOpen(true);
         }}
       />
 
-      {settingsOpen ? (
+      {settingsOpen && !accountRequired ? (
         <Suspense fallback={null}>
           <SettingsDialog
             open={settingsOpen}
@@ -1631,8 +1733,6 @@ export default function App() {
             lastAccountSyncAt={lastAccountSyncAt}
             accountRecoveryCode={accountRecoveryCode}
             onClearAccountRecoveryCode={() => setAccountRecoveryCode("")}
-            passwordResetToken={accountResetToken}
-            onClearPasswordResetToken={() => setAccountResetToken("")}
             onAuthModeChanged={() => setNoticeToast(null)}
             initialAuthMode={accountEntryAuthMode}
             onAccountLogin={(email, password) =>
@@ -1640,9 +1740,6 @@ export default function App() {
             }
             onAccountSignupCreate={handleAccountSignupCreate}
             onAccountRecoveryReset={handleAccountRecoveryReset}
-            onAccountResetVerify={({ token, password }) =>
-              handleAccountResetVerify({ token, password })
-            }
             onAccountLogout={handleAccountLogout}
             onAccountExport={handleAccountExport}
             onAccountDelete={handleAccountDelete}
@@ -1660,49 +1757,165 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      <div className="container">
-        {showAccountOnboardingNudge ? (
-          <section className="accountOnboardingNudge" aria-label="Account setup prompt">
-            <div className="accountOnboardingCopy">
-              <p className="accountOnboardingTitle">Create your account first</p>
-              <p className="accountOnboardingText">
-                Sign up to keep your bills synced and available across phone and web.
-              </p>
-            </div>
-            <div className="accountOnboardingActions">
-              <button
-                type="button"
-                className="btn headerBtn accountNudgePrimary"
-                onClick={() => openAccountDialog("signup")}
-              >
-                Create account
-              </button>
-              <button
-                type="button"
-                className="btn headerBtn accountNudgeSecondary"
-                onClick={() => openAccountDialog("signin")}
-              >
-                I already have one
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        <div ref={dueSoonRef}>
-          <DueSoonBanner
-            dueSoonBills={dueSoonList}
-            onOpen={(id) => {
+      {calendarOpen && !accountRequired ? (
+        <Suspense fallback={null}>
+          <CalendarDialog
+            open={calendarOpen}
+            onClose={() => {
+              setCalendarOpen(false);
+              if (mobileTab === "calendar") {
+                setMobileTab("bills");
+              }
+            }}
+            bills={activeEnriched}
+            onOpenBill={(id) => {
+              setCalendarOpen(false);
+              if (mobileTab === "calendar") {
+                setMobileTab("bills");
+              }
               setSelectedId(id);
               setDetailsOpen(true);
             }}
           />
-        </div>
+        </Suspense>
+      ) : null}
 
-        <div ref={billsRef} className="card billsCard">
+      <div className="container">
+        {accountRequired ? (
+          <div className="accountLockedShowcase">
+            <section
+              className="accountOnboardingNudge"
+              aria-label="Account required prompt"
+              data-testid="account-locked-card"
+            >
+              <div className="accountOnboardingCopy">
+                <p className="accountOnboardingTitle">Account required</p>
+                <p className="accountOnboardingText">
+                  Sign in to sync your bills across phone and web.
+                </p>
+              </div>
+              <div className="accountOnboardingActions">
+                <button
+                  type="button"
+                  className="btn headerBtn accountNudgePrimary"
+                  data-testid="account-locked-create-button"
+                  onClick={() => openAccountDialog("signup")}
+                >
+                  Create free account
+                </button>
+                <button
+                  type="button"
+                  className="btn headerBtn accountNudgeSecondary"
+                  data-testid="account-locked-signin-button"
+                  onClick={() => openAccountDialog("signin")}
+                >
+                  Sign in
+                </button>
+              </div>
+            </section>
+
+            <section className="accountPreviewCarousel" aria-label="Pocket Ledger features preview">
+              <div className="accountPreviewHeader">
+                <p className="accountPreviewKicker">Preview</p>
+                <p className="accountPreviewHeadline">What you unlock after sign in</p>
+              </div>
+
+              <div className="accountPreviewViewport">
+                <div
+                  className="accountPreviewTrack"
+                  style={{ transform: `translateX(-${accountPreviewIndex * 100}%)` }}
+                >
+                  {ACCOUNT_FEATURE_PREVIEWS.map((slide) => (
+                    <article key={slide.id} className="accountPreviewSlide">
+                      <div className={`accountPreviewMock is-${slide.id}`} aria-hidden="true">
+                        <div className="accountPreviewMockTop">
+                          <span className="accountPreviewMockBadge">{slide.badge}</span>
+                          <span className="accountPreviewMockStat">
+                            <strong>{slide.statValue}</strong>
+                            <span>{slide.statLabel}</span>
+                          </span>
+                        </div>
+                        <div className="accountPreviewMockRows">
+                          {slide.rows.map((row) => (
+                            <div key={`${slide.id}-${row.label}`} className="accountPreviewMockRow">
+                              <span className="accountPreviewMockRowLabel">{row.label}</span>
+                              <span className={`accountPreviewMockRowStatus is-${row.tone}`}>
+                                {row.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="accountPreviewMeta">
+                        <div className="accountPreviewMetaStat" aria-hidden="true">
+                          <strong className="accountPreviewMetaStatValue">{slide.statValue}</strong>
+                          <span className="accountPreviewMetaStatLabel">{slide.statLabel}</span>
+                        </div>
+                        <p className="accountPreviewTitle">{slide.title}</p>
+                        <p className="accountPreviewText">{slide.text}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              <div className="accountPreviewControls">
+                <button
+                  type="button"
+                  className="btn small accountPreviewControlBtn"
+                  aria-label="Previous preview"
+                  onClick={showPrevAccountPreview}
+                >
+                  <span className="accountPreviewControlIcon" aria-hidden="true">
+                    {"<"}
+                  </span>
+                  <span className="accountPreviewControlLabel">Prev</span>
+                </button>
+                <div className="accountPreviewDots" role="tablist" aria-label="Feature preview slides">
+                  {ACCOUNT_FEATURE_PREVIEWS.map((slide, index) => (
+                    <button
+                      key={slide.id}
+                      type="button"
+                      className={`accountPreviewDot ${index === accountPreviewIndex ? "is-active" : ""}`}
+                      aria-label={`Show ${slide.badge}`}
+                      aria-pressed={index === accountPreviewIndex}
+                      onClick={() => setAccountPreviewIndex(index)}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="btn small accountPreviewControlBtn"
+                  aria-label="Next preview"
+                  onClick={showNextAccountPreview}
+                >
+                  <span className="accountPreviewControlIcon" aria-hidden="true">
+                    {">"}
+                  </span>
+                  <span className="accountPreviewControlLabel">Next</span>
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
+
+        {!accountRequired ? (
+          <>
+            <div ref={dueSoonRef}>
+              <DueSoonBanner
+                dueSoonBills={dueSoonList}
+                onOpen={(id) => {
+                  setSelectedId(id);
+                  setDetailsOpen(true);
+                }}
+              />
+            </div>
+
+            <div ref={billsRef} className="card billsCard" data-testid="bills-tracker-card">
           <div className="cardHeader billsHeader">
             <div className="billsIntro">
               <div className="billsTitleRow">
-                <h2>Bills Tracker</h2>
+                <h2 data-testid="bills-tracker-title">Bills Tracker</h2>
                 <button
                   type="button"
                   className="infoTip"
@@ -1806,6 +2019,7 @@ export default function App() {
 
               <button
                 className="btn primary"
+                data-testid="add-bill-button"
                 onClick={() => {
                   setEditingId(null);
                   setEditorOpen(true);
@@ -1864,10 +2078,12 @@ export default function App() {
             />
           )}
 
-        </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
-      {!hasBlockingModal ? (
+      {!hasBlockingModal && !accountRequired ? (
         <MobileBottomNav
           active={mobileTab}
           accountSignedIn={Boolean(accountUser?.id)}
@@ -1875,13 +2091,14 @@ export default function App() {
             setMobileTab(tab);
             if (tab === "bills") scrollToRef(billsRef);
             if (tab === "due") scrollToRef(dueSoonRef);
+            if (tab === "calendar") setCalendarOpen(true);
             if (tab === "stats") scrollToRef(statsRef);
             if (tab === "account") openAccountDialog("signin");
           }}
         />
       ) : null}
 
-      {editorOpen ? (
+      {editorOpen && !accountRequired ? (
         <Suspense fallback={null}>
           <BillEditorDialog
             onClose={() => setEditorOpen(false)}
@@ -1902,7 +2119,7 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {detailsOpen ? (
+      {detailsOpen && !accountRequired ? (
         <Suspense fallback={null}>
           <BillDetailsDialog
             open={detailsOpen}
@@ -1980,7 +2197,7 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {clearConfirmOpen ? (
+      {clearConfirmOpen && !accountRequired ? (
         <div
           className="modalBackdrop confirmBackdrop"
           onMouseDown={() => setClearConfirmOpen(false)}

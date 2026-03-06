@@ -162,3 +162,131 @@ test("deletePaymentFromBill removes non-counted entries without rewinding cycle"
   assert.equal(next.cyclePaidAmount, bill.cyclePaidAmount);
   assert.equal(next.payments.some((p) => p.id === "pay-roll"), false);
 });
+
+test("markBillPaidAndAdvance settles one-time bills without advancing due date", () => {
+  const bill = {
+    id: "bill-one-time",
+    name: "Friend debt",
+    category: "Debt",
+    dueDate: "2026-02-10",
+    amount: 500,
+    notes: "",
+    payments: [],
+    cadence: "one-time",
+    reminderDays: 3,
+    totalMonths: 0,
+    paidMonths: 0,
+    cyclePaidAmount: 120,
+  };
+
+  const next = markBillPaidAndAdvance(bill);
+
+  assert.equal(next.dueDate, bill.dueDate);
+  assert.equal(next.cyclePaidAmount, 500);
+  assert.equal(next.payments[0].amount, 380);
+  assert.equal(next.payments[0].settledCycles, 1);
+});
+
+test("deletePaymentFromBill recalculates one-time paid state from remaining history", () => {
+  const bill = {
+    id: "bill-one-time-delete",
+    name: "Laptop debt",
+    category: "Debt",
+    dueDate: "2026-02-10",
+    amount: 200,
+    notes: "",
+    payments: [
+      {
+        id: "pay-over",
+        date: "2026-02-12",
+        amount: 40,
+        note: "Extra",
+        settledCycles: 0,
+      },
+      {
+        id: "pay-settle",
+        date: "2026-02-11",
+        amount: 120,
+        note: "Paid",
+        settledCycles: 1,
+      },
+      {
+        id: "pay-start",
+        date: "2026-02-10",
+        amount: 80,
+        note: "Partial",
+        settledCycles: 0,
+      },
+    ],
+    cadence: "one-time",
+    reminderDays: 3,
+    totalMonths: 0,
+    paidMonths: 0,
+    cyclePaidAmount: 200,
+  };
+
+  const next = deletePaymentFromBill(bill, "pay-over");
+
+  assert.equal(next.dueDate, bill.dueDate);
+  assert.equal(next.cyclePaidAmount, 200);
+  assert.equal(next.payments.some((p) => p.id === "pay-over"), false);
+});
+
+test("statement-plan payment settles current statement and carries remainder", () => {
+  const bill = {
+    id: "bill-statement-1",
+    name: "Tiktok PayLater",
+    category: "Debt",
+    dueDate: "2026-10-25",
+    amount: 1000,
+    notes: "",
+    payments: [],
+    cadence: "statement-plan",
+    statementAmounts: [1000, 876.93, 721.69],
+    statementIndex: 0,
+    reminderDays: 3,
+    totalMonths: 3,
+    paidMonths: 0,
+    cyclePaidAmount: 0,
+  };
+
+  const next = addPaymentToBillAndAdvance(bill, {
+    id: "pay-plan-1",
+    date: "2026-10-25",
+    amount: 1120,
+    note: "Payment",
+  });
+
+  assert.equal(next.dueDate, "2026-11-25");
+  assert.equal(next.statementIndex, 1);
+  assert.equal(next.amount, 876.93);
+  assert.equal(next.cyclePaidAmount, 120);
+  assert.equal(next.payments[0].settledCycles, 1);
+});
+
+test("statement-plan mark paid on final statement keeps due date and marks full", () => {
+  const bill = {
+    id: "bill-statement-final",
+    name: "Tiktok PayLater",
+    category: "Debt",
+    dueDate: "2026-12-25",
+    amount: 721.69,
+    notes: "",
+    payments: [],
+    cadence: "statement-plan",
+    statementAmounts: [1000, 876.93, 721.69],
+    statementIndex: 2,
+    reminderDays: 3,
+    totalMonths: 3,
+    paidMonths: 2,
+    cyclePaidAmount: 200,
+  };
+
+  const next = markBillPaidAndAdvance(bill);
+
+  assert.equal(next.dueDate, bill.dueDate);
+  assert.equal(next.statementIndex, 2);
+  assert.equal(next.amount, 721.69);
+  assert.equal(next.cyclePaidAmount, 721.69);
+  assert.equal(next.payments[0].settledCycles, 1);
+});

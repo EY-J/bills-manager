@@ -97,6 +97,14 @@ Run before deployment:
   `npm run test`
 - Production build:
   `npm run build`
+- Full local test pipeline (lint + unit + all smoke/E2E suites):
+  `npm run test:all`
+
+For full offline/service-worker validation against HTTPS preview:
+- Windows PowerShell:
+  `$env:TEST_ALL_BASE_URL='https://your-preview-url.vercel.app'; npm run test:all`
+- macOS/Linux:
+  `TEST_ALL_BASE_URL=https://your-preview-url.vercel.app npm run test:all`
 
 Responsive smoke test:
 

@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-process.env.AUTH_DEBUG_TOKENS = "1";
-
 function createRequest({
   method = "POST",
   headers = {},
@@ -93,29 +91,15 @@ test("account sync stores and returns payload for authenticated user", async () 
   const email = `sync_${Date.now()}@example.com`;
   const password = "Strong-pass-123";
 
-  const requestCodeReq = createRequest({
+  const signupReq = createRequest({
     method: "POST",
     headers: authHeaders(),
-    body: { action: "request-signup-code", email },
+    body: { action: "signup", email, password },
   });
-  const requestCodeRes = createResponse();
-  await authHandler(requestCodeReq, requestCodeRes);
-  assert.equal(requestCodeRes.statusCode, 200);
-
-  const completeReq = createRequest({
-    method: "POST",
-    headers: authHeaders(),
-    body: {
-      action: "complete-signup",
-      email,
-      password,
-      code: requestCodeRes.body?.debugCode,
-    },
-  });
-  const completeRes = createResponse();
-  await authHandler(completeReq, completeRes);
-  assert.equal(completeRes.statusCode, 200);
-  const cookie = String(completeRes.headers["set-cookie"] || "");
+  const signupRes = createResponse();
+  await authHandler(signupReq, signupRes);
+  assert.equal(signupRes.statusCode, 200);
+  const cookie = String(signupRes.headers["set-cookie"] || "");
   assert.match(cookie, /bills_account_session=/i);
 
   const putReq = createRequest({

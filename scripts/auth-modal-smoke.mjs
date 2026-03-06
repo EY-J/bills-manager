@@ -19,6 +19,8 @@ const VIEWPORTS = [
   { name: "desktop", width: 1366, height: 768 },
   { name: "mobile", width: 390, height: 844 },
 ];
+const E2E_UNLOCK_KEY = "__bills_e2e_unlock_session_v1";
+const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
 
 function resolveNpmInvocation(args) {
   if (NPM_EXEC_PATH) {
@@ -175,26 +177,32 @@ async function assertNoHorizontalOverflow(page, label) {
 
 async function runAuthModalChecks(page, viewportName) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.evaluate(
+    ({ unlockKey, knownKey }) => {
+      localStorage.removeItem(unlockKey);
+      localStorage.removeItem(knownKey);
+    },
+    { unlockKey: E2E_UNLOCK_KEY, knownKey: ACCOUNT_KNOWN_KEY }
+  );
+  await page.reload({ waitUntil: "domcontentloaded" });
 
   const accountOpenDeadline = Date.now() + 14_000;
   let opened = false;
   while (Date.now() < accountOpenDeadline && !opened) {
-    const desktopOpenAccountButton = page.locator('button[aria-label^="Open account"]').first();
-    if (
-      (await desktopOpenAccountButton.count()) > 0 &&
-      (await desktopOpenAccountButton.isVisible())
-    ) {
-      await desktopOpenAccountButton.click();
+    const candidateButtons = [
+      page.getByTestId("account-locked-signin-button").first(),
+      page.getByTestId("open-account-button").first(),
+      page.locator('button[aria-label^="Open account"]').first(),
+      page.getByRole("button", { name: /^Account$/i }).first(),
+    ];
+    for (const candidate of candidateButtons) {
+      if ((await candidate.count()) === 0) continue;
+      if (!(await candidate.isVisible())) continue;
+      await candidate.click();
       opened = true;
       break;
     }
-
-    const mobileAccountButton = page.getByRole("button", { name: /^Account$/i }).first();
-    if ((await mobileAccountButton.count()) > 0 && (await mobileAccountButton.isVisible())) {
-      await mobileAccountButton.click();
-      opened = true;
-      break;
-    }
+    if (opened) break;
 
     await sleep(120);
   }
@@ -203,69 +211,54 @@ async function runAuthModalChecks(page, viewportName) {
     throw new Error("Could not find a visible Account open button.");
   }
 
-  const modal = page.locator(".accountModal").first();
+  const modal = page.getByTestId("account-modal").first();
   await modal.waitFor({ state: "visible", timeout: 8_000 });
   await assertNoHorizontalOverflow(page, `${viewportName}: account modal open`);
 
-  const primaryActionButton = modal
-    .locator(".accountDataActions.is-single .settingsActionPrimary")
-    .first();
-  await primaryActionButton.waitFor({ state: "visible", timeout: 4_000 });
-  assert.equal(await primaryActionButton.isDisabled(), true);
+  const signInActionButton = modal.getByTestId("account-signin-submit").first();
+  await signInActionButton.waitFor({ state: "visible", timeout: 4_000 });
+  assert.equal(await signInActionButton.isDisabled(), true);
 
-  const signInEmailInput = modal.locator('input[aria-label="Email"]').first();
-  const signInPasswordInput = modal.locator('input[aria-label="Password"]').first();
+  const signInEmailInput = modal.getByTestId("account-email-input").first();
+  const signInPasswordInput = modal.getByTestId("account-password-input").first();
   await signInEmailInput.fill("smoke.user@example.com");
   await signInPasswordInput.fill("weak-pass-123");
 
   await waitForCondition(async () => {
-    assert.equal(await primaryActionButton.isDisabled(), false);
+    assert.equal(await signInActionButton.isDisabled(), false);
   }, `${viewportName}: sign-in button should enable with email+password`);
 
-  await modal
-    .locator(".accountAssistBtn")
-    .filter({ hasText: /^Create one$/i })
-    .first()
-    .click();
-  const createEmailInput = modal.locator('input[aria-label="Email"]').first();
-  const createPasswordInput = modal.locator('input[aria-label="Password"]').first();
-  const confirmPasswordInput = modal.locator('input[aria-label="Re-enter password"]').first();
+  await modal.getByTestId("account-switch-signup").first().click();
+  const createActionButton = modal.getByTestId("account-signup-submit").first();
+  const createEmailInput = modal.getByTestId("account-email-input").first();
+  const createPasswordInput = modal.getByTestId("account-password-input").first();
+  const confirmPasswordInput = modal.getByTestId("account-password-confirm-input").first();
   await createEmailInput.fill("create.user@example.com");
   await createPasswordInput.fill("weak-pass-123");
   await confirmPasswordInput.fill("weak-pass-123");
 
   await waitForCondition(async () => {
-    assert.equal(await primaryActionButton.isDisabled(), true);
+    assert.equal(await createActionButton.isDisabled(), true);
   }, `${viewportName}: create account button should remain disabled for weak password`);
 
   await createPasswordInput.fill("Strong-pass-123");
   await confirmPasswordInput.fill("Strong-pass-123");
   await waitForCondition(async () => {
-    assert.equal(await primaryActionButton.isDisabled(), false);
+    assert.equal(await createActionButton.isDisabled(), false);
   }, `${viewportName}: create account button should enable for valid password`);
 
-  await modal
-    .locator(".accountAssistBtn")
-    .filter({ hasText: /^Sign in$/i })
-    .first()
-    .click();
-  await modal
-    .locator(".accountAssistBtn")
-    .filter({ hasText: /Forgot password/i })
-    .first()
-    .click();
+  await modal.getByTestId("account-switch-signin").first().click();
+  await modal.getByTestId("account-switch-recover-password").first().click();
 
-  const resetActionButton = modal
-    .locator(".accountDataActions.is-single .settingsActionPrimary")
-    .first();
+  const resetActionButton = modal.getByTestId("account-recovery-submit").first();
   await waitForCondition(async () => {
     await resetActionButton.waitFor({ state: "visible", timeout: 3_000 });
   }, `${viewportName}: recovery reset action button visible`);
 
-  const resetEmailInput = modal.locator('input[aria-label="Email"]').first();
-  const recoveryCodeInput = modal.locator('input[aria-label="Recovery code"]').first();
-  const resetPasswordInput = modal.locator('input[aria-label="New password"]').first();
-  const resetConfirmInput = modal.locator('input[aria-label="Re-enter new password"]').first();
+  const resetEmailInput = modal.getByTestId("account-email-input").first();
+  const recoveryCodeInput = modal.getByTestId("account-recovery-code-input").first();
+  const resetPasswordInput = modal.getByTestId("account-password-input").first();
+  const resetConfirmInput = modal.getByTestId("account-password-confirm-input").first();
 
   await resetEmailInput.fill("");
   await recoveryCodeInput.fill("");

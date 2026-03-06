@@ -10,6 +10,10 @@ import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
 import { createBackupPayload } from "../src/features/bills/billsService.js";
+import {
+  deleteCreatedAccountIfNeeded,
+  ensureAuthenticatedSession,
+} from "./_e2e-account-session.mjs";
 
 const HOST = "127.0.0.1";
 const NPM_EXEC_PATH = String(process.env.npm_execpath || "").trim();
@@ -18,6 +22,8 @@ const SPAWN_OPTIONS = {
   stdio: "inherit",
   shell: false,
 };
+const E2E_UNLOCK_KEY = "__bills_e2e_unlock_session_v1";
+const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
 
 function runCommand(command, args, label) {
   return new Promise((resolve, reject) => {
@@ -193,6 +199,34 @@ async function waitForAssertion(assertion, label, timeoutMs = 10_000) {
   throw new Error(`${label}: ${message}`);
 }
 
+async function waitForTrackerOrAccountLocked(page, timeoutMs = 12_000) {
+  const started = Date.now();
+  let sawAccountLocked = false;
+  while (Date.now() - started < timeoutMs) {
+    const state = await page.evaluate(() => {
+      const hasTracker = Boolean(
+        document.querySelector('[data-testid="bills-tracker-title"]')
+      );
+      const hasTrackerHeading = Array.from(document.querySelectorAll("h2")).some(
+        (node) => node.textContent?.trim() === "Bills Tracker"
+      );
+      const hasAccountLocked = Boolean(
+        document.querySelector('[data-testid="account-locked-card"]')
+      );
+      if (hasTracker || hasTrackerHeading) return "tracker";
+      if (hasAccountLocked) return "account-locked";
+      return "";
+    });
+    if (state === "tracker") return "tracker";
+    if (state === "account-locked") {
+      sawAccountLocked = true;
+    }
+    await sleep(120);
+  }
+  if (sawAccountLocked) return "account-locked";
+  throw new Error(`App did not render tracker/account lock within ${timeoutMs}ms`);
+}
+
 async function waitForToast(page, text) {
   const toast = page.locator(".undoToast, .noticeToast").filter({ hasText: text }).first();
   await toast.waitFor({ state: "visible", timeout: 10_000 });
@@ -224,30 +258,88 @@ function getBillRow(page, name) {
 }
 
 async function openSettings(page) {
-  await page.locator('button[aria-label="Open settings"]:visible').first().click();
+  const desktopSettingsButton = page.getByTestId("open-settings-button-desktop").first();
+  const mobileSettingsButton = page.getByTestId("open-settings-button-mobile").first();
+  if ((await desktopSettingsButton.count()) > 0 && (await desktopSettingsButton.isVisible())) {
+    await desktopSettingsButton.click();
+  } else if ((await mobileSettingsButton.count()) > 0 && (await mobileSettingsButton.isVisible())) {
+    await mobileSettingsButton.click();
+  } else {
+    await page.locator('button[aria-label="Open settings"]:visible').first().click();
+  }
   const settingsModal = page.locator(".settingsModal").first();
   await settingsModal.waitFor({ state: "visible", timeout: 10_000 });
   return settingsModal;
 }
 
-async function runCriticalFlow(page, restoreFilePath) {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.evaluate(() => {
-    localStorage.clear();
-    localStorage.setItem("bills_notify_enabled", "false");
-    localStorage.setItem("bills_compact_mode", "false");
-    localStorage.setItem("bills_table_density", "comfortable");
-    localStorage.setItem("bills_notify_mode", "digest");
-  });
-  await page.reload({ waitUntil: "domcontentloaded" });
+async function runCriticalFlow(
+  page,
+  restoreFilePath,
+  { allowAccountLockedSkip = false, requireExternalAccount = false } = {}
+) {
+  let createdAccount = { created: false, password: "" };
 
-  await page.locator('h2:has-text("Bills Tracker")').first().waitFor({ state: "visible" });
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    if (allowAccountLockedSkip) {
+      const authResult = await ensureAuthenticatedSession(page, {
+        label: "critical-flow",
+        strict: requireExternalAccount,
+      });
+      if (authResult.status !== "pass") {
+        if (authResult.status === "fail") {
+          return {
+            status: "fail",
+            error: authResult.reason,
+          };
+        }
+        return {
+          status: "skip",
+          note: `Critical bill-flow checks skipped: ${authResult.reason}`,
+        };
+      }
+      createdAccount = authResult;
+    }
 
-  const billName = `E2E Bill ${Date.now()}`;
+    await page.evaluate(({ unlockKey, knownKey }) => {
+      localStorage.clear();
+      localStorage.setItem("bills_notify_enabled", "false");
+      localStorage.setItem("bills_compact_mode", "false");
+      localStorage.setItem("bills_table_density", "comfortable");
+      localStorage.setItem("bills_notify_mode", "digest");
+      localStorage.setItem(unlockKey, "1");
+      localStorage.setItem(knownKey, "1");
+    }, { unlockKey: E2E_UNLOCK_KEY, knownKey: ACCOUNT_KNOWN_KEY });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    const readyState = await waitForTrackerOrAccountLocked(page);
+    if (readyState === "account-locked") {
+      const note = "Critical bill-flow checks skipped: deployed app remained account-locked.";
+      if (allowAccountLockedSkip) {
+        if (requireExternalAccount) {
+          return {
+            status: "fail",
+            error: note,
+          };
+        }
+        return {
+          status: "skip",
+          note,
+        };
+      }
+      throw new Error("Bills tracker did not unlock after seeded local session.");
+    }
+
+    const billName = `E2E Bill ${Date.now()}`;
 
   // 1) Create bill
   console.log("Step 1/6: create bill");
-  await page.locator('button.btn.primary:has-text("+ Add bill"):visible').first().click();
+  const addBillButton = page.getByTestId("add-bill-button").first();
+  if ((await addBillButton.count()) > 0 && (await addBillButton.isVisible())) {
+    await addBillButton.click();
+  } else {
+    await page.locator('button.btn.primary:has-text("+ Add bill"):visible').first().click();
+  }
   const editor = page.locator(".billEditorModal").first();
   await editor.waitFor({ state: "visible", timeout: 10_000 });
   await editor.getByPlaceholder("e.g., Water & Sewer").fill(billName);
@@ -333,6 +425,11 @@ async function runCriticalFlow(page, restoreFilePath) {
   const clearToast = await waitForToast(page, "All bills cleared");
   await clearToast.getByRole("button", { name: /^Undo$/i }).first().click();
   await getBillRow(page, "Restore Target").waitFor({ state: "visible", timeout: 12_000 });
+
+    return { status: "pass" };
+  } finally {
+    await deleteCreatedAccountIfNeeded(page, createdAccount);
+  }
 }
 
 async function main() {
@@ -375,8 +472,21 @@ async function main() {
       acceptDownloads: true,
     });
     const page = await context.newPage();
-    await runCriticalFlow(page, restoreFilePath);
+    const outcome = await runCriticalFlow(page, restoreFilePath, {
+      allowAccountLockedSkip: isExternalRun,
+      requireExternalAccount:
+        isExternalRun && String(process.env.E2E_REQUIRE_ACCOUNT || "").trim() === "1",
+    });
     await context.close();
+
+    if (outcome.status === "fail") {
+      throw new Error(outcome.error || "Critical flow checks failed.");
+    }
+
+    if (outcome.status === "skip") {
+      console.log(`SKIP  critical flow checks -> ${outcome.note}`);
+      return;
+    }
 
     console.log(
       `Critical deployed flow checks passed [${

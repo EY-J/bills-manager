@@ -12,15 +12,16 @@
     "test:responsive:install": "playwright install chromium",
     "test:responsive": "node scripts/responsive-check.mjs",
     "test:e2e:auth": "node scripts/auth-modal-smoke.mjs",
+    "test:e2e:ui": "node scripts/ui-lock-calendar-smoke.mjs",
     "test:offline": "node scripts/offline-smoke.mjs",
     "test:e2e:critical": "node scripts/deployed-critical-check.mjs",
-    "test:sw-upgrade": "node scripts/sw-upgrade-smoke.mjs"
+    "test:sw-upgrade": "node scripts/sw-upgrade-smoke.mjs",
+    "test:all": "node scripts/test-all.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.3.0",
     "framer-motion": "^12.34.2",
     "lucide-react": "^0.575.0",
-    "nodemailer": "^7.0.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0"

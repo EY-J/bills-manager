@@ -67,14 +67,11 @@ export default function AccountDialog({
   lastAccountSyncAt,
   accountRecoveryCode,
   onClearAccountRecoveryCode,
-  passwordResetToken,
-  onClearPasswordResetToken,
   onAuthModeChanged,
   initialAuthMode,
   onAccountLogin,
   onAccountSignupCreate,
   onAccountRecoveryReset,
-  onAccountResetVerify,
   onAccountLogout,
   onAccountExport,
   onAccountDelete,
@@ -132,11 +129,9 @@ export default function AccountDialog({
     Boolean(lastAccountSyncAt) && !Number.isNaN(new Date(lastAccountSyncAt).getTime());
   const lastAccountSyncLabel = formatLastSync(lastAccountSyncAt);
 
-  const hasPasswordResetToken = Boolean(String(passwordResetToken || "").trim());
-  const effectiveAuthMode = hasPasswordResetToken ? "reset-password" : authMode;
+  const effectiveAuthMode = authMode;
   const isCreateAccountMode = effectiveAuthMode === "signup";
   const isRecoverPasswordMode = effectiveAuthMode === "recover-password";
-  const isResetPasswordMode = effectiveAuthMode === "reset-password";
   const isSignInMode = effectiveAuthMode === "signin";
 
   const normalizedEmail = String(accountEmailInput || "").trim().toLowerCase();
@@ -148,12 +143,9 @@ export default function AccountDialog({
   const passwordPolicy = getPasswordPolicyStatus(passwordValue);
   const passwordsMatch = passwordValue.length > 0 && passwordValue === passwordConfirmValue;
   const showSignupPasswordStrength =
-    (isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode) &&
-    passwordValue.length > 0;
+    (isCreateAccountMode || isRecoverPasswordMode) && passwordValue.length > 0;
   const showSignupPasswordRules =
-    (isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode) &&
-    passwordValue.length > 0 &&
-    !passwordPolicy.isValid;
+    (isCreateAccountMode || isRecoverPasswordMode) && passwordValue.length > 0 && !passwordPolicy.isValid;
   const signupPasswordStrength = getPasswordStrength(passwordValue);
 
   const canSignIn = Boolean(normalizedEmail) && Boolean(passwordValue);
@@ -172,10 +164,8 @@ export default function AccountDialog({
     passwordPolicy.isValid &&
     passwordsMatch &&
     (!recoveryChallengeRequired || Boolean(String(recoveryChallengeAnswer || "").trim()));
-  const canCompletePasswordReset =
-    Boolean(String(passwordResetToken || "").trim()) && passwordPolicy.isValid && passwordsMatch;
   const showPasswordConfirmMismatch =
-    (isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode) &&
+    (isCreateAccountMode || isRecoverPasswordMode) &&
     passwordConfirmValue.length > 0 &&
     !passwordsMatch;
   const hasInvalidCredentialsError = loginErrorKind === "invalid-credentials";
@@ -223,9 +213,6 @@ export default function AccountDialog({
 
   function handleAuthModeChange(nextMode) {
     if (nextMode === effectiveAuthMode) return;
-    if (hasPasswordResetToken && nextMode !== "reset-password") {
-      onClearPasswordResetToken?.();
-    }
     onAuthModeChanged?.(nextMode);
     setAuthMode(nextMode);
     resetAuthTransientState();
@@ -358,30 +345,6 @@ export default function AccountDialog({
     setRecoveryFeedbackTone("error");
   }
 
-  async function handleCompletePasswordResetClick() {
-    const token = String(passwordResetToken || "").trim();
-    const password = String(accountPasswordInput || "");
-    if (!token) return;
-    if (!passwordPolicy.isValid) {
-      focusInput(passwordInputRef);
-      return;
-    }
-    if (!passwordsMatch) {
-      focusInput(passwordConfirmInputRef);
-      return;
-    }
-    if (!password || !canCompletePasswordReset) {
-      focusInput(passwordInputRef);
-      return;
-    }
-    const result = await onAccountResetVerify?.({ token, password });
-    if (result?.ok) {
-      onClearPasswordResetToken?.();
-      setAuthMode("signin");
-      resetAuthTransientState();
-    }
-  }
-
   async function handleCopyRecoveryCodeClick() {
     const value = String(accountRecoveryCode || "").trim();
     if (!value) return;
@@ -418,17 +381,13 @@ export default function AccountDialog({
     ? "Create account"
     : isRecoverPasswordMode
       ? "Recover password"
-      : isResetPasswordMode
-        ? "Set new password"
-        : "Sign in";
+      : "Sign in";
 
   const authFormHint = isCreateAccountMode
     ? "Create your account to sync bills."
     : isRecoverPasswordMode
       ? "Use your recovery code to reset your password."
-      : isResetPasswordMode
-        ? "Set your new password to continue."
-        : "Use email and password to sign in.";
+      : "Use email and password to sign in.";
 
   const headerTitle = accountUser?.email ? "Account" : authFormTitle;
   const headerSubtitle = accountUser?.email
@@ -439,6 +398,7 @@ export default function AccountDialog({
     <div className="modalBackdrop" onMouseDown={onClose}>
       <div
         className={`modal modal-md accountModal ${accountUser?.email ? "" : "accountModalAuth"}`}
+        data-testid="account-modal"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="modalHeader">
@@ -446,7 +406,12 @@ export default function AccountDialog({
             <h3>{headerTitle}</h3>
             <p className="muted">{headerSubtitle}</p>
           </div>
-          <button className="iconBtn" onClick={onClose} aria-label="Close account">
+          <button
+            className="iconBtn"
+            onClick={onClose}
+            aria-label="Close account"
+            data-testid="account-close-button"
+          >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M4 4l8 8M12 4l-8 8" />
             </svg>
@@ -454,7 +419,10 @@ export default function AccountDialog({
         </div>
 
         <div className="modalBody settingsBody is-scrollable">
-          <section className="settingsSection">
+          <section
+            className="settingsSection"
+            data-testid={`account-auth-mode-${effectiveAuthMode}`}
+          >
             {accountUser?.email ? (
               <>
                 <p className="settingsSectionTitle">Account sync</p>
@@ -691,6 +659,7 @@ export default function AccountDialog({
                     </div>
                     <input
                       ref={emailInputRef}
+                      data-testid="account-email-input"
                       className={`input settingsAuthInput ${showSignInEmailError ? "is-error" : ""}`.trim()}
                       type="email"
                       autoComplete="email"
@@ -707,11 +676,11 @@ export default function AccountDialog({
                   </div>
                 ) : null}
 
-                {isSignInMode || isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode ? (
+                {isSignInMode || isCreateAccountMode || isRecoverPasswordMode ? (
                   <div className="settingsRow settingsRowStack">
                     <div className="settingsMeta">
                       <span className="settingsLabel">
-                        {isResetPasswordMode || isRecoverPasswordMode ? "New password" : "Password"}
+                        {isRecoverPasswordMode ? "New password" : "Password"}
                       </span>
                     </div>
                     <div
@@ -719,19 +688,18 @@ export default function AccountDialog({
                     >
                       <input
                         ref={passwordInputRef}
+                        data-testid="account-password-input"
                         className={`input settingsAuthInput settingsPasswordInput ${
                           showSignInPasswordError ? "is-error" : ""
                         }`.trim()}
                         type={showPasswordInput ? "text" : "password"}
                         autoComplete={
-                          isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode
+                          isCreateAccountMode || isRecoverPasswordMode
                             ? "new-password"
                             : "current-password"
                         }
                         aria-label={
-                          isResetPasswordMode || isRecoverPasswordMode
-                            ? "New password"
-                            : "Password"
+                          isRecoverPasswordMode ? "New password" : "Password"
                         }
                         aria-invalid={showSignInPasswordError ? "true" : undefined}
                         value={accountPasswordInput}
@@ -740,9 +708,7 @@ export default function AccountDialog({
                           if (loginErrorKind) setLoginErrorKind("");
                         }}
                         placeholder={
-                          isResetPasswordMode || isRecoverPasswordMode
-                            ? "Enter new password"
-                            : "Enter password"
+                          isRecoverPasswordMode ? "Enter new password" : "Enter password"
                         }
                         maxLength={128}
                       />
@@ -783,6 +749,7 @@ export default function AccountDialog({
                     </div>
                     <input
                       ref={recoveryCodeInputRef}
+                      data-testid="account-recovery-code-input"
                       className="input settingsAuthInput"
                       type="text"
                       autoComplete="one-time-code"
@@ -800,13 +767,11 @@ export default function AccountDialog({
                   </div>
                 ) : null}
 
-                {isCreateAccountMode || isResetPasswordMode || isRecoverPasswordMode ? (
+                {isCreateAccountMode || isRecoverPasswordMode ? (
                   <div className="settingsRow settingsRowStack">
                     <div className="settingsMeta">
                       <span className="settingsLabel">
-                        {isResetPasswordMode || isRecoverPasswordMode
-                          ? "Re-enter new password"
-                          : "Re-enter password"}
+                        {isRecoverPasswordMode ? "Re-enter new password" : "Re-enter password"}
                       </span>
                     </div>
                     <div
@@ -814,23 +779,20 @@ export default function AccountDialog({
                     >
                       <input
                         ref={passwordConfirmInputRef}
+                        data-testid="account-password-confirm-input"
                         className={`input settingsAuthInput settingsPasswordInput ${
                           showPasswordConfirmMismatch ? "is-error" : ""
                         }`.trim()}
                         type={showPasswordConfirmInput ? "text" : "password"}
                         autoComplete="new-password"
                         aria-label={
-                          isResetPasswordMode || isRecoverPasswordMode
-                            ? "Re-enter new password"
-                            : "Re-enter password"
+                          isRecoverPasswordMode ? "Re-enter new password" : "Re-enter password"
                         }
                         aria-invalid={showPasswordConfirmMismatch ? "true" : undefined}
                         value={passwordConfirmInput}
                         onChange={(e) => setPasswordConfirmInput(e.target.value)}
                         placeholder={
-                          isResetPasswordMode || isRecoverPasswordMode
-                            ? "Re-enter new password"
-                            : "Re-enter password"
+                          isRecoverPasswordMode ? "Re-enter new password" : "Re-enter password"
                         }
                         maxLength={128}
                       />
@@ -881,6 +843,7 @@ export default function AccountDialog({
                       <button
                         type="button"
                         className="btn headerBtn settingsActionPrimary accountCreateActionBtn"
+                        data-testid="account-signup-submit"
                         disabled={accountBusy || accountSyncBusy || !canStartSignup}
                         onClick={async () => {
                           await handleCreateAccountClick();
@@ -900,6 +863,7 @@ export default function AccountDialog({
                       <button
                         type="button"
                         className="accountAssistBtn accountAssistCreateBtn"
+                        data-testid="account-switch-signin"
                         disabled={accountBusy || accountSyncBusy}
                         onClick={() => handleAuthModeChange("signin")}
                       >
@@ -937,6 +901,7 @@ export default function AccountDialog({
                       <button
                         type="button"
                         className="btn headerBtn settingsActionPrimary"
+                        data-testid="account-recovery-submit"
                         disabled={accountBusy || accountSyncBusy || !canRecoverPassword}
                         onClick={async () => {
                           await handleRecoverPasswordClick();
@@ -961,34 +926,7 @@ export default function AccountDialog({
                       <button
                         type="button"
                         className="accountAssistBtn"
-                        disabled={accountBusy || accountSyncBusy}
-                        onClick={() => handleAuthModeChange("signin")}
-                      >
-                        Back to sign in
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-
-                {isResetPasswordMode ? (
-                  <>
-                    <div className="settingsActions settingsDataActions accountDataActions is-single">
-                      <button
-                        type="button"
-                        className="btn headerBtn settingsActionPrimary"
-                        disabled={accountBusy || accountSyncBusy || !canCompletePasswordReset}
-                        onClick={async () => {
-                          await handleCompletePasswordResetClick();
-                        }}
-                      >
-                        {accountBusy ? "Please wait..." : "Reset password"}
-                      </button>
-                    </div>
-
-                    <div className="accountAssistRow">
-                      <button
-                        type="button"
-                        className="accountAssistBtn"
+                        data-testid="account-switch-signin"
                         disabled={accountBusy || accountSyncBusy}
                         onClick={() => handleAuthModeChange("signin")}
                       >
@@ -1004,6 +942,7 @@ export default function AccountDialog({
                       <button
                         type="button"
                         className="btn headerBtn settingsActionPrimary"
+                        data-testid="account-signin-submit"
                         disabled={accountBusy || accountSyncBusy || !canSignIn || signInOnCooldown}
                         onClick={async () => {
                           await handleAccountLoginClick();
@@ -1036,6 +975,7 @@ export default function AccountDialog({
                       <button
                         type="button"
                         className="accountAssistBtn accountAssistBtnMuted"
+                        data-testid="account-switch-recover-password"
                         disabled={accountBusy || accountSyncBusy}
                         onClick={() => handleAuthModeChange("recover-password")}
                       >
@@ -1046,6 +986,7 @@ export default function AccountDialog({
                         <button
                           type="button"
                           className="accountAssistBtn accountAssistCreateBtn"
+                          data-testid="account-switch-signup"
                           disabled={accountBusy || accountSyncBusy}
                           onClick={() => handleAuthModeChange("signup")}
                         >

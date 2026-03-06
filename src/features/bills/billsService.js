@@ -61,6 +61,28 @@ function sanitizeSettledCycles(value) {
   return Math.floor(n);
 }
 
+function sanitizeStatementAmounts(value, fallbackAmount) {
+  const raw = Array.isArray(value) ? value : [];
+  const normalized = raw
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => Number(n.toFixed(2)));
+
+  if (normalized.length > 0) return normalized;
+
+  const fallback = sanitizeAmount(fallbackAmount);
+  if (fallback > 0) return [Number(fallback.toFixed(2))];
+
+  return [];
+}
+
+function sanitizeStatementIndex(value, statementAmounts) {
+  const maxIndex = Math.max((statementAmounts?.length || 0) - 1, 0);
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.floor(n), maxIndex);
+}
+
 function sanitizeReminderSnooze(value) {
   if (!value || typeof value !== "object") return null;
   if (value.type === "days" && isValidISODate(value.until)) {
@@ -110,13 +132,29 @@ function sanitizePaymentShape(payment, fallbackDate) {
 
 function sanitizeBillShape(bill, fallbackDate) {
   const dueDate = isValidISODate(bill?.dueDate) ? bill.dueDate : fallbackDate;
-  const amount = sanitizeAmount(bill?.amount);
+  const baseAmount = sanitizeAmount(bill?.amount);
+  const cadence = typeof bill?.cadence === "string" ? bill.cadence : "monthly";
+  const statementAmounts =
+    cadence === "statement-plan"
+      ? sanitizeStatementAmounts(bill?.statementAmounts, baseAmount)
+      : [];
+  const statementIndex =
+    cadence === "statement-plan"
+      ? sanitizeStatementIndex(bill?.statementIndex, statementAmounts)
+      : 0;
+  const amount =
+    cadence === "statement-plan" && statementAmounts.length > 0
+      ? Number(statementAmounts[statementIndex] || 0)
+      : baseAmount;
   const paymentsRaw = Array.isArray(bill?.payments) ? bill.payments : [];
   const payments = sortPaymentsDesc(
     paymentsRaw.map((p) => sanitizePaymentShape(p, dueDate))
   );
 
-  const totalMonths = sanitizeWholeNumber(bill?.totalMonths);
+  const totalMonths =
+    cadence === "statement-plan"
+      ? statementAmounts.length
+      : sanitizeWholeNumber(bill?.totalMonths);
   let paidMonths = sanitizeWholeNumber(bill?.paidMonths);
   if (totalMonths > 0) paidMonths = Math.min(paidMonths, totalMonths);
   if (totalMonths === 0) paidMonths = 0;
@@ -129,7 +167,9 @@ function sanitizeBillShape(bill, fallbackDate) {
     amount,
     notes: typeof bill?.notes === "string" ? bill.notes : "",
     payments,
-    cadence: typeof bill?.cadence === "string" ? bill.cadence : "monthly",
+    cadence,
+    statementAmounts,
+    statementIndex,
     reminderDays: Number.isFinite(Number(bill?.reminderDays))
       ? Number(bill.reminderDays)
       : 3,

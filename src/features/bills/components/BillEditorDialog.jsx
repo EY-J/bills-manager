@@ -8,6 +8,7 @@ const CATEGORIES = [
   "Utilities",
   "Transportation",
   "Insurance",
+  "Credit",
   "Debt",
   "Education",
   "Subscriptions",
@@ -15,6 +16,21 @@ const CATEGORIES = [
   "Family",
   "Other",
 ];
+
+function formatCadenceOptionLabel(cadence) {
+  if (cadence === "one-time") return "One-time";
+  if (cadence === "statement-plan") return "Statement plan (variable)";
+  const raw = String(cadence || "monthly");
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function parseStatementAmountsInput(value) {
+  return String(value || "")
+    .split(/[\n,]+/)
+    .map((part) => Number(part.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .map((n) => Number(n.toFixed(2)));
+}
 
 function buildInitialDraft(bill) {
   return {
@@ -27,6 +43,9 @@ function buildInitialDraft(bill) {
     notes: bill?.notes || "",
     totalMonths: String(bill?.totalMonths ?? 0),
     paidMonths: String(bill?.paidMonths ?? 0),
+    statementAmounts: Array.isArray(bill?.statementAmounts)
+      ? bill.statementAmounts.join(", ")
+      : "",
   };
 }
 
@@ -41,6 +60,7 @@ function normalizeDraftForCompare(draft) {
     notes: draft.notes || "",
     totalMonths: Number(draft.totalMonths || 0),
     paidMonths: Number(draft.paidMonths || 0),
+    statementAmounts: parseStatementAmountsInput(draft.statementAmounts).join(","),
   };
 }
 
@@ -78,15 +98,26 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
   const canSave = useMemo(() => {
     if (!draft.name.trim()) return false;
     const amount = Number(draft.amount);
+    const isStatementPlan = draft.cadence === "statement-plan";
+    const statementAmounts = parseStatementAmountsInput(draft.statementAmounts);
     const totalMonths = Number(draft.totalMonths);
     const paidMonths = Number(draft.paidMonths);
     if (Number.isNaN(amount) || amount < 0) return false;
+    if (isStatementPlan && statementAmounts.length === 0) return false;
+    if (isStatementPlan) return true;
     if (!Number.isInteger(totalMonths) || totalMonths < 0) return false;
     if (!Number.isInteger(paidMonths) || paidMonths < 0) return false;
     if (totalMonths === 0 && paidMonths > 0) return false;
     if (totalMonths > 0 && paidMonths > totalMonths) return false;
     return true;
-  }, [draft.name, draft.amount, draft.totalMonths, draft.paidMonths]);
+  }, [
+    draft.name,
+    draft.amount,
+    draft.cadence,
+    draft.statementAmounts,
+    draft.totalMonths,
+    draft.paidMonths,
+  ]);
 
   const isDirty = useMemo(() => {
     const current = normalizeDraftForCompare(draft);
@@ -105,6 +136,7 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
       notes: draft.notes,
       totalMonths: Number(draft.totalMonths || 0),
       paidMonths: Number(draft.paidMonths || 0),
+      statementAmounts: parseStatementAmountsInput(draft.statementAmounts),
     };
   }
 
@@ -148,8 +180,9 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               ) : null}
             </div>
             <p className="muted">
-              Enter this month's due date and amount. Marking paid logs a payment
-              and advances to next month.
+              Set the due date and amount. Recurring bills roll to the next cycle
+              when fully paid, while one-time and statement-plan bills support
+              full payoff behavior.
             </p>
           </div>
           <button className="iconBtn" disabled={isSaving} onClick={handleRequestClose} aria-label="Close editor">
@@ -214,45 +247,72 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               onChange={(e) =>
                 setDraft((d) => ({ ...d, amount: e.target.value }))
               }
-            />
+              />
+              {draft.cadence === "statement-plan" ? (
+                <div className="muted small" style={{ marginTop: 6 }}>
+                  For statement plans, this is fallback only. Real monthly dues
+                  come from the statement amounts below.
+                </div>
+              ) : null}
           </div>
+
+          {draft.cadence === "statement-plan" ? (
+            <div className="field">
+              <label>Statement amounts (monthly order)</label>
+              <textarea
+                className="textarea"
+                disabled={isSaving}
+                value={draft.statementAmounts}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, statementAmounts: e.target.value }))
+                }
+                placeholder="e.g. 1646.82, 876.93, 721.69, 576.39"
+              />
+              <div className="muted small" style={{ marginTop: 6 }}>
+                Use comma or new line per amount. Due date starts from the first
+                month and moves monthly.
+              </div>
+            </div>
+          ) : null}
+
+          {draft.cadence !== "statement-plan" ? (
+            <div className="grid2">
+              <div className="field">
+                <label>Total months</label>
+                <input
+                  className="input"
+                  disabled={isSaving}
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={draft.totalMonths}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, totalMonths: e.target.value }))
+                  }
+                  placeholder="0 = no plan"
+                />
+              </div>
+
+              <div className="field">
+                <label>Already paid months</label>
+                <input
+                  className="input"
+                  disabled={isSaving}
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={draft.paidMonths}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, paidMonths: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid2">
             <div className="field">
-              <label>Total months</label>
-              <input
-                className="input"
-                disabled={isSaving}
-                type="number"
-                min="0"
-                step="1"
-                value={draft.totalMonths}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, totalMonths: e.target.value }))
-                }
-                placeholder="0 = no plan"
-              />
-            </div>
-
-            <div className="field">
-              <label>Already paid months</label>
-              <input
-                className="input"
-                disabled={isSaving}
-                type="number"
-                min="0"
-                step="1"
-                value={draft.paidMonths}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, paidMonths: e.target.value }))
-                }
-              />
-            </div>
-          </div>
-
-          <div className="grid2">
-            <div className="field">
-              <label>Recurring cadence</label>
+              <label>Payment cadence</label>
               <select
                 className="select"
                 disabled={isSaving}
@@ -263,7 +323,7 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               >
                 {BILL_CADENCE_OPTIONS.map((cadence) => (
                   <option key={cadence} value={cadence}>
-                    {cadence}
+                    {formatCadenceOptionLabel(cadence)}
                   </option>
                 ))}
               </select>
