@@ -667,7 +667,7 @@ export default function AccountDialog({
                   <button
                     type="button"
                     className="btn headerBtn settingsActionSecondary"
-                    disabled={accountBusy || accountSyncBusy || isManualSyncBusy}
+                    disabled={accountBusy || isManualSyncBusy}
                     onClick={() => {
                       setPasswordChangeOpen(true);
                       setDeleteConfirmOpen(false);
@@ -1339,7 +1339,7 @@ export default function AccountDialog({
                     type="button"
                     className="btn headerBtn settingsActionPrimary"
                     data-testid="account-change-password-submit"
-                    disabled={!canSubmitPasswordChange || accountBusy || accountSyncBusy}
+                    disabled={!canSubmitPasswordChange || accountBusy}
                     onClick={async () => {
                       await handleChangePasswordClick();
                     }}

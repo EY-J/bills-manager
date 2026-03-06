@@ -1178,7 +1178,7 @@ export default function App() {
     if (!cleanNewPassword) {
       return { ok: false, message: "Enter your new password." };
     }
-    if (accountBusy || accountSyncBusy) {
+    if (accountBusy) {
       return { ok: false, message: "Please wait..." };
     }
 
