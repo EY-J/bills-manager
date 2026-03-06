@@ -124,11 +124,17 @@ export default function AccountDialog({
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
+      if (passwordChangeOpen) {
+        setPasswordChangeOpen(false);
+        setPasswordChangeFeedback("");
+        setPasswordChangeFeedbackTone("");
+        return;
+      }
       onClose?.();
     }
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
+  }, [onClose, passwordChangeOpen]);
 
   useEffect(() => {
     if (loginCooldownSeconds <= 0) return undefined;
@@ -200,11 +206,9 @@ export default function AccountDialog({
   const newPasswordPolicy = getPasswordPolicyStatus(newPasswordValue);
   const newPasswordStrength = getPasswordStrength(newPasswordValue);
   const newPasswordsMatch = newPasswordValue.length > 0 && newPasswordValue === newPasswordConfirmValue;
-  const showChangePasswordStrength = passwordChangeOpen && newPasswordValue.length > 0;
-  const showChangePasswordRules =
-    passwordChangeOpen && newPasswordValue.length > 0 && !newPasswordPolicy.isValid;
-  const showChangePasswordMismatch =
-    passwordChangeOpen && newPasswordConfirmValue.length > 0 && !newPasswordsMatch;
+  const showChangePasswordStrength = newPasswordValue.length > 0;
+  const showChangePasswordRules = newPasswordValue.length > 0 && !newPasswordPolicy.isValid;
+  const showChangePasswordMismatch = newPasswordConfirmValue.length > 0 && !newPasswordsMatch;
   const isNewPasswordSameAsCurrent =
     newPasswordValue.length > 0 &&
     currentPasswordValue.length > 0 &&
@@ -222,6 +226,22 @@ export default function AccountDialog({
     if (typeof node.select === "function") {
       node.select();
     }
+  }
+
+  function resetPasswordChangeState() {
+    setAccountCurrentPasswordInput("");
+    setAccountNewPasswordInput("");
+    setAccountNewPasswordConfirmInput("");
+    setShowCurrentPasswordInput(false);
+    setShowNewPasswordInput(false);
+    setShowNewPasswordConfirmInput(false);
+    setPasswordChangeFeedback("");
+    setPasswordChangeFeedbackTone("");
+  }
+
+  function closePasswordChangeModal() {
+    setPasswordChangeOpen(false);
+    resetPasswordChangeState();
   }
 
   function resetAuthTransientState() {
@@ -242,16 +262,17 @@ export default function AccountDialog({
     setAccountDeleteFeedback("");
     setShowDeletePasswordInput(false);
     setPasswordChangeOpen(false);
-    setAccountCurrentPasswordInput("");
-    setAccountNewPasswordInput("");
-    setAccountNewPasswordConfirmInput("");
-    setShowCurrentPasswordInput(false);
-    setShowNewPasswordInput(false);
-    setShowNewPasswordConfirmInput(false);
-    setPasswordChangeFeedback("");
-    setPasswordChangeFeedbackTone("");
+    resetPasswordChangeState();
     setRecoveryCodeCopied(false);
   }
+
+  useEffect(() => {
+    if (!passwordChangeOpen) return undefined;
+    const timerId = window.setTimeout(() => {
+      focusInput(currentPasswordInputRef);
+    }, 0);
+    return () => window.clearTimeout(timerId);
+  }, [passwordChangeOpen]);
 
   function handleAuthModeChange(nextMode) {
     if (nextMode === effectiveAuthMode) return;
@@ -447,18 +468,7 @@ export default function AccountDialog({
       newPassword: newPasswordValue,
     });
     if (result?.ok) {
-      setAccountCurrentPasswordInput("");
-      setAccountNewPasswordInput("");
-      setAccountNewPasswordConfirmInput("");
-      setShowCurrentPasswordInput(false);
-      setShowNewPasswordInput(false);
-      setShowNewPasswordConfirmInput(false);
-      setPasswordChangeFeedback(
-        typeof result?.message === "string" && result.message.trim()
-          ? result.message.trim()
-          : "Password changed successfully."
-      );
-      setPasswordChangeFeedbackTone("success");
+      closePasswordChangeModal();
       return;
     }
 
@@ -488,12 +498,13 @@ export default function AccountDialog({
     : authFormHint;
 
   return (
-    <div className="modalBackdrop" onMouseDown={onClose}>
-      <div
-        className={`modal modal-md accountModal ${accountUser?.email ? "" : "accountModalAuth"}`}
-        data-testid="account-modal"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+    <>
+      <div className="modalBackdrop" onMouseDown={onClose}>
+        <div
+          className={`modal modal-md accountModal ${accountUser?.email ? "" : "accountModalAuth"}`}
+          data-testid="account-modal"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
         <div className="modalHeader">
           <div>
             <h3>{headerTitle}</h3>
@@ -658,15 +669,14 @@ export default function AccountDialog({
                     className="btn headerBtn settingsActionSecondary"
                     disabled={accountBusy || accountSyncBusy || isManualSyncBusy}
                     onClick={() => {
-                      setPasswordChangeOpen((open) => !open);
+                      setPasswordChangeOpen(true);
                       setDeleteConfirmOpen(false);
                       setAccountDeleteFeedback("");
                       setShowDeletePasswordInput(false);
-                      setPasswordChangeFeedback("");
-                      setPasswordChangeFeedbackTone("");
+                      resetPasswordChangeState();
                     }}
                   >
-                    {passwordChangeOpen ? "Cancel password change" : "Change password"}
+                    Change password
                   </button>
                   <button
                     className="btn headerBtn settingsActionDanger"
@@ -678,177 +688,6 @@ export default function AccountDialog({
                     Sign out
                   </button>
                 </div>
-
-                {passwordChangeOpen ? (
-                  <div className="settingsRow settingsRowStack">
-                    <div className="settingsMeta">
-                      <span className="settingsLabel">Change password</span>
-                      <span className="settingsHint">
-                        Enter your current password, then set a new one.
-                      </span>
-                    </div>
-
-                    <div className="settingsPasswordField">
-                      <input
-                        ref={currentPasswordInputRef}
-                        className="input settingsAuthInput settingsPasswordInput"
-                        type={showCurrentPasswordInput ? "text" : "password"}
-                        autoComplete="current-password"
-                        aria-label="Current password"
-                        value={accountCurrentPasswordInput}
-                        onChange={(e) => {
-                          setAccountCurrentPasswordInput(e.target.value);
-                          if (passwordChangeFeedback) {
-                            setPasswordChangeFeedback("");
-                            setPasswordChangeFeedbackTone("");
-                          }
-                        }}
-                        placeholder="Enter current password"
-                        maxLength={128}
-                      />
-                      <button
-                        type="button"
-                        className="settingsPasswordToggleBtn"
-                        onClick={() => setShowCurrentPasswordInput((v) => !v)}
-                        aria-label={showCurrentPasswordInput ? "Hide password" : "Show password"}
-                        aria-pressed={showCurrentPasswordInput}
-                      >
-                        {showCurrentPasswordInput ? (
-                          <EyeOff aria-hidden="true" focusable="false" />
-                        ) : (
-                          <Eye aria-hidden="true" focusable="false" />
-                        )}
-                      </button>
-                    </div>
-
-                    <div
-                      className={`settingsPasswordField ${
-                        isNewPasswordSameAsCurrent ? "is-error" : ""
-                      }`.trim()}
-                    >
-                      <input
-                        ref={newPasswordInputRef}
-                        className="input settingsAuthInput settingsPasswordInput"
-                        type={showNewPasswordInput ? "text" : "password"}
-                        autoComplete="new-password"
-                        aria-label="New password"
-                        aria-invalid={isNewPasswordSameAsCurrent ? "true" : undefined}
-                        value={accountNewPasswordInput}
-                        onChange={(e) => {
-                          setAccountNewPasswordInput(e.target.value);
-                          if (passwordChangeFeedback) {
-                            setPasswordChangeFeedback("");
-                            setPasswordChangeFeedbackTone("");
-                          }
-                        }}
-                        placeholder="Enter new password"
-                        maxLength={128}
-                      />
-                      <button
-                        type="button"
-                        className="settingsPasswordToggleBtn"
-                        onClick={() => setShowNewPasswordInput((v) => !v)}
-                        aria-label={showNewPasswordInput ? "Hide password" : "Show password"}
-                        aria-pressed={showNewPasswordInput}
-                      >
-                        {showNewPasswordInput ? (
-                          <EyeOff aria-hidden="true" focusable="false" />
-                        ) : (
-                          <Eye aria-hidden="true" focusable="false" />
-                        )}
-                      </button>
-                    </div>
-
-                    {showChangePasswordStrength || isNewPasswordSameAsCurrent ? (
-                      <div className="accountPasswordMeta" role="status" aria-live="polite">
-                        {showChangePasswordRules ? (
-                          <p className="accountPasswordRequirement">
-                            Use at least 8 characters, including uppercase, lowercase, and a
-                            number.
-                          </p>
-                        ) : null}
-                        {isNewPasswordSameAsCurrent ? (
-                          <p className="accountPasswordRequirement">
-                            New password must be different from current password.
-                          </p>
-                        ) : null}
-                        {showChangePasswordStrength ? (
-                          <p className={`accountPasswordStrength is-${newPasswordStrength.tone}`}>
-                            Password strength: <strong>{newPasswordStrength.label}</strong>
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    <div
-                      className={`settingsPasswordField ${
-                        showChangePasswordMismatch ? "is-error" : ""
-                      }`.trim()}
-                    >
-                      <input
-                        ref={newPasswordConfirmInputRef}
-                        className={`input settingsAuthInput settingsPasswordInput ${
-                          showChangePasswordMismatch ? "is-error" : ""
-                        }`.trim()}
-                        type={showNewPasswordConfirmInput ? "text" : "password"}
-                        autoComplete="new-password"
-                        aria-label="Re-enter new password"
-                        aria-invalid={showChangePasswordMismatch ? "true" : undefined}
-                        value={accountNewPasswordConfirmInput}
-                        onChange={(e) => {
-                          setAccountNewPasswordConfirmInput(e.target.value);
-                          if (passwordChangeFeedback) {
-                            setPasswordChangeFeedback("");
-                            setPasswordChangeFeedbackTone("");
-                          }
-                        }}
-                        placeholder="Re-enter new password"
-                        maxLength={128}
-                      />
-                      <button
-                        type="button"
-                        className="settingsPasswordToggleBtn"
-                        onClick={() => setShowNewPasswordConfirmInput((v) => !v)}
-                        aria-label={
-                          showNewPasswordConfirmInput
-                            ? "Hide password confirmation"
-                            : "Show password confirmation"
-                        }
-                        aria-pressed={showNewPasswordConfirmInput}
-                      >
-                        {showNewPasswordConfirmInput ? (
-                          <EyeOff aria-hidden="true" focusable="false" />
-                        ) : (
-                          <Eye aria-hidden="true" focusable="false" />
-                        )}
-                      </button>
-                    </div>
-
-                    <div className="settingsActions settingsDataActions accountDataActions is-single">
-                      <button
-                        type="button"
-                        className="btn headerBtn settingsActionPrimary"
-                        data-testid="account-change-password-submit"
-                        disabled={!canSubmitPasswordChange || accountBusy || accountSyncBusy}
-                        onClick={async () => {
-                          await handleChangePasswordClick();
-                        }}
-                      >
-                        {accountBusy ? "Please wait..." : "Update password"}
-                      </button>
-                    </div>
-                    <div
-                      className={`accountAuthLiveRegion ${
-                        passwordChangeFeedbackTone ? `is-${passwordChangeFeedbackTone}` : ""
-                      }`.trim()}
-                      role="status"
-                      aria-live="polite"
-                      aria-atomic="true"
-                    >
-                      {passwordChangeFeedback}
-                    </div>
-                  </div>
-                ) : null}
 
                 <p className="settingsSectionTitle accountSubsectionTitle">Data</p>
                 <div className="settingsActions settingsDataActions accountDataActions is-single">
@@ -876,9 +715,7 @@ export default function AccountDialog({
                       setDeleteConfirmOpen((open) => !open);
                       setAccountDeleteFeedback("");
                       setShowDeletePasswordInput(false);
-                      setPasswordChangeOpen(false);
-                      setPasswordChangeFeedback("");
-                      setPasswordChangeFeedbackTone("");
+                      closePasswordChangeModal();
                     }}
                   >
                     {deleteConfirmOpen ? "Cancel delete" : "Delete account"}
@@ -1311,7 +1148,221 @@ export default function AccountDialog({
           </section>
         </div>
       </div>
-    </div>
+      </div>
+
+      {passwordChangeOpen ? (
+        <div className="modalBackdrop accountChildModalBackdrop" onMouseDown={closePasswordChangeModal}>
+          <div
+            className="modal modal-md accountChildModal"
+            data-testid="account-change-password-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="modalHeader">
+              <div>
+                <h3>Change password</h3>
+                <p className="muted">Enter your current password, then set a new one.</p>
+              </div>
+              <button
+                className="iconBtn"
+                onClick={closePasswordChangeModal}
+                aria-label="Close password change"
+                data-testid="account-change-password-close"
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="modalBody settingsBody is-scrollable">
+              <section className="settingsSection">
+                <div className="settingsRow settingsRowStack">
+                  <div className="settingsMeta">
+                    <span className="settingsLabel">Current password</span>
+                  </div>
+                  <div className="settingsPasswordField">
+                    <input
+                      ref={currentPasswordInputRef}
+                      className="input settingsAuthInput settingsPasswordInput"
+                      type={showCurrentPasswordInput ? "text" : "password"}
+                      autoComplete="current-password"
+                      aria-label="Current password"
+                      value={accountCurrentPasswordInput}
+                      onChange={(e) => {
+                        setAccountCurrentPasswordInput(e.target.value);
+                        if (passwordChangeFeedback) {
+                          setPasswordChangeFeedback("");
+                          setPasswordChangeFeedbackTone("");
+                        }
+                      }}
+                      placeholder="Enter current password"
+                      maxLength={128}
+                    />
+                    <button
+                      type="button"
+                      className="settingsPasswordToggleBtn"
+                      onClick={() => setShowCurrentPasswordInput((v) => !v)}
+                      aria-label={showCurrentPasswordInput ? "Hide password" : "Show password"}
+                      aria-pressed={showCurrentPasswordInput}
+                    >
+                      {showCurrentPasswordInput ? (
+                        <EyeOff aria-hidden="true" focusable="false" />
+                      ) : (
+                        <Eye aria-hidden="true" focusable="false" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settingsRow settingsRowStack">
+                  <div className="settingsMeta">
+                    <span className="settingsLabel">New password</span>
+                  </div>
+                  <div
+                    className={`settingsPasswordField ${
+                      isNewPasswordSameAsCurrent ? "is-error" : ""
+                    }`.trim()}
+                  >
+                    <input
+                      ref={newPasswordInputRef}
+                      className="input settingsAuthInput settingsPasswordInput"
+                      type={showNewPasswordInput ? "text" : "password"}
+                      autoComplete="new-password"
+                      aria-label="New password"
+                      aria-invalid={isNewPasswordSameAsCurrent ? "true" : undefined}
+                      value={accountNewPasswordInput}
+                      onChange={(e) => {
+                        setAccountNewPasswordInput(e.target.value);
+                        if (passwordChangeFeedback) {
+                          setPasswordChangeFeedback("");
+                          setPasswordChangeFeedbackTone("");
+                        }
+                      }}
+                      placeholder="Enter new password"
+                      maxLength={128}
+                    />
+                    <button
+                      type="button"
+                      className="settingsPasswordToggleBtn"
+                      onClick={() => setShowNewPasswordInput((v) => !v)}
+                      aria-label={showNewPasswordInput ? "Hide password" : "Show password"}
+                      aria-pressed={showNewPasswordInput}
+                    >
+                      {showNewPasswordInput ? (
+                        <EyeOff aria-hidden="true" focusable="false" />
+                      ) : (
+                        <Eye aria-hidden="true" focusable="false" />
+                      )}
+                    </button>
+                  </div>
+
+                  {showChangePasswordStrength || isNewPasswordSameAsCurrent ? (
+                    <div className="accountPasswordMeta" role="status" aria-live="polite">
+                      {showChangePasswordRules ? (
+                        <p className="accountPasswordRequirement">
+                          Use at least 8 characters, including uppercase, lowercase, and a number.
+                        </p>
+                      ) : null}
+                      {isNewPasswordSameAsCurrent ? (
+                        <p className="accountPasswordRequirement">
+                          New password must be different from current password.
+                        </p>
+                      ) : null}
+                      {showChangePasswordStrength ? (
+                        <p className={`accountPasswordStrength is-${newPasswordStrength.tone}`}>
+                          Password strength: <strong>{newPasswordStrength.label}</strong>
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="settingsRow settingsRowStack">
+                  <div className="settingsMeta">
+                    <span className="settingsLabel">Confirm new password</span>
+                  </div>
+                  <div
+                    className={`settingsPasswordField ${
+                      showChangePasswordMismatch ? "is-error" : ""
+                    }`.trim()}
+                  >
+                    <input
+                      ref={newPasswordConfirmInputRef}
+                      className={`input settingsAuthInput settingsPasswordInput ${
+                        showChangePasswordMismatch ? "is-error" : ""
+                      }`.trim()}
+                      type={showNewPasswordConfirmInput ? "text" : "password"}
+                      autoComplete="new-password"
+                      aria-label="Re-enter new password"
+                      aria-invalid={showChangePasswordMismatch ? "true" : undefined}
+                      value={accountNewPasswordConfirmInput}
+                      onChange={(e) => {
+                        setAccountNewPasswordConfirmInput(e.target.value);
+                        if (passwordChangeFeedback) {
+                          setPasswordChangeFeedback("");
+                          setPasswordChangeFeedbackTone("");
+                        }
+                      }}
+                      placeholder="Re-enter new password"
+                      maxLength={128}
+                    />
+                    <button
+                      type="button"
+                      className="settingsPasswordToggleBtn"
+                      onClick={() => setShowNewPasswordConfirmInput((v) => !v)}
+                      aria-label={
+                        showNewPasswordConfirmInput
+                          ? "Hide password confirmation"
+                          : "Show password confirmation"
+                      }
+                      aria-pressed={showNewPasswordConfirmInput}
+                    >
+                      {showNewPasswordConfirmInput ? (
+                        <EyeOff aria-hidden="true" focusable="false" />
+                      ) : (
+                        <Eye aria-hidden="true" focusable="false" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settingsActions settingsDataActions accountDataActions">
+                  <button
+                    type="button"
+                    className="btn headerBtn settingsActionSecondary"
+                    onClick={closePasswordChangeModal}
+                    disabled={accountBusy || accountSyncBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn headerBtn settingsActionPrimary"
+                    data-testid="account-change-password-submit"
+                    disabled={!canSubmitPasswordChange || accountBusy || accountSyncBusy}
+                    onClick={async () => {
+                      await handleChangePasswordClick();
+                    }}
+                  >
+                    {accountBusy ? "Please wait..." : "Update password"}
+                  </button>
+                </div>
+                <div
+                  className={`accountAuthLiveRegion ${
+                    passwordChangeFeedbackTone ? `is-${passwordChangeFeedbackTone}` : ""
+                  }`.trim()}
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {passwordChangeFeedback}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

@@ -456,21 +456,32 @@ async function assertAccountModalResponsive(page, viewportWidth, viewportName) {
   await assertNoHorizontalOverflow(page, `${viewportName}: account open`);
 
   const changePasswordToggle = accountModal
-    .getByRole("button", { name: /change password|cancel password change/i })
+    .getByRole("button", { name: /change password/i })
     .first();
   await changePasswordToggle.waitFor({ state: "visible", timeout: 10_000 });
   await changePasswordToggle.click();
 
-  await accountModal
+  const changePasswordModal = page.getByTestId("account-change-password-modal").first();
+  await changePasswordModal.waitFor({ state: "visible", timeout: 10_000 });
+  await assertElementFitsWidth(
+    page,
+    ".accountChildModal",
+    viewportWidth,
+    `${viewportName}: account change password modal`
+  );
+  await assertNoHorizontalOverflow(page, `${viewportName}: account change password open`);
+
+  await changePasswordModal
     .locator('input[aria-label="Current password"]')
     .first()
     .waitFor({ state: "visible", timeout: 10_000 });
-  await assertNoHorizontalOverflow(page, `${viewportName}: account change password open`);
   await assertContainerScrollsIfNeeded(
     page,
-    ".accountModal .settingsBody",
-    `${viewportName}: account scroll body`
+    ".accountChildModal .settingsBody",
+    `${viewportName}: account change password scroll body`
   );
+  await changePasswordModal.getByTestId("account-change-password-close").first().click();
+  await changePasswordModal.waitFor({ state: "hidden", timeout: 10_000 });
 
   await accountModal.getByTestId("account-close-button").first().click();
   await accountModal.waitFor({ state: "hidden", timeout: 10_000 });
