@@ -1,0 +1,77 @@
+{
+  "generatedAt": "2026-03-06T16:30:48.715Z",
+  "size": {
+    "cssWidth": 1200,
+    "cssHeight": 630,
+    "exportWidth": 2400,
+    "exportHeight": 1260,
+    "scale": 2
+  },
+  "images": [
+    {
+      "file": "00-cover.png",
+      "title": "Pocket Ledger",
+      "subtitle": "Quick intro before the tour: this app helps make bill tracking less stressful."
+    },
+    {
+      "file": "01-recurring-bills.png",
+      "title": "Bills on repeat? You are covered.",
+      "subtitle": "Track monthly, bi-weekly, and weekly bills without overthinking it."
+    },
+    {
+      "file": "02-payments-and-history.png",
+      "title": "Log every payment, even partial ones.",
+      "subtitle": "Paid half today and the rest later? That is easy to track here."
+    },
+    {
+      "file": "03-mark-paid-advance.png",
+      "title": "Tap paid and move on.",
+      "subtitle": "One click marks the bill paid and pushes the due date forward."
+    },
+    {
+      "file": "04-status-and-alerts.png",
+      "title": "See what needs attention fast.",
+      "subtitle": "Status tags make it obvious what is paid, due soon, or overdue."
+    },
+    {
+      "file": "05-search-and-filters.png",
+      "title": "Find bills in seconds.",
+      "subtitle": "Use search and quick filters so you can focus on the right list."
+    },
+    {
+      "file": "06-calendar-view.png",
+      "title": "Monthly view, zero guesswork.",
+      "subtitle": "Open calendar mode and spot busy due-date weeks at a glance."
+    },
+    {
+      "file": "07-dashboard-totals.png",
+      "title": "Quick money snapshot.",
+      "subtitle": "Check due this month, overdue amount, and total paid right away."
+    },
+    {
+      "file": "08-undo-protection.png",
+      "title": "Made a mistake? Undo it.",
+      "subtitle": "Accidental delete or edit can be reversed in one tap."
+    },
+    {
+      "file": "09-backup-restore.png",
+      "title": "Backup your data anytime.",
+      "subtitle": "Export JSON backups and restore with built-in validation checks."
+    },
+    {
+      "file": "10-account-sync.png",
+      "title": "Same data on phone and web.",
+      "subtitle": "Sign in once and keep your records synced across devices."
+    },
+    {
+      "file": "11-account-recovery.png",
+      "title": "Account recovery without panic.",
+      "subtitle": "Recovery code and password tools are there when you need them."
+    },
+    {
+      "file": "12-settings-and-pwa.png",
+      "title": "Set it up your way.",
+      "subtitle": "Customize notifications, compact mode, and install it like an app."
+    }
+  ]
+}

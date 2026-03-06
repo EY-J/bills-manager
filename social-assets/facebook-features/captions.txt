@@ -1,0 +1,41 @@
+# Pocket Ledger Casual Facebook Captions
+
+00-cover.png
+Hey friends, quick intro to Pocket Ledger. Swipe through the next cards for a simple feature tour.
+
+01-recurring-bills.png
+Bills keep repeating every month? Pocket Ledger keeps them organized so you do not miss due dates.
+
+02-payments-and-history.png
+Full payment or partial payment, both are tracked. You always know what was already paid.
+
+03-mark-paid-advance.png
+One tap for Mark Paid and the next due date updates automatically. Super quick for busy days.
+
+04-status-and-alerts.png
+No more guessing. Status labels quickly show what to pay now and what can wait.
+
+05-search-and-filters.png
+Need one bill fast? Use search and quick filters to jump right to it.
+
+06-calendar-view.png
+Calendar view helps you see heavy due-date weeks early, so you can plan your budget better.
+
+07-dashboard-totals.png
+At a glance, you can see how much is due, overdue, and already paid this month.
+
+08-undo-protection.png
+Accidentally changed something? Undo is built in, so your data is safer.
+
+09-backup-restore.png
+You can back up your bills anytime and restore safely when needed.
+
+10-account-sync.png
+Use Pocket Ledger on phone and web with the same records synced across devices.
+
+11-account-recovery.png
+Forgot credentials? Recovery code and password tools help you get back in quickly.
+
+12-settings-and-pwa.png
+Pick your preferred layout and reminders, then install it like an app on your phone.
+
