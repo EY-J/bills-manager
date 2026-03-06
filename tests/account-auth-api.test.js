@@ -716,6 +716,149 @@ test("account auth delete-account removes account and clears session", async () 
   assert.equal(reSignupRes.body?.ok, true);
 });
 
+test("account auth change-password requires authenticated session", async () => {
+  const handler = await loadHandler();
+
+  const changeReq = createRequest({
+    method: "POST",
+    headers: authHeaders(),
+    body: {
+      action: "change-password",
+      currentPassword: "Strong-pass-123",
+      newPassword: "Updated-pass-456",
+    },
+  });
+  const changeRes = createResponse();
+  await handler(changeReq, changeRes);
+  assert.equal(changeRes.statusCode, 401);
+  assert.equal(changeRes.body?.error, "Unauthorized.");
+});
+
+test("account auth change-password rejects invalid current password", async () => {
+  const handler = await loadHandler();
+  const email = `change_pw_wrong_${Date.now()}@example.com`;
+  const password = "Strong-pass-123";
+
+  const signupReq = createRequest({
+    method: "POST",
+    headers: authHeaders(),
+    body: {
+      action: "signup",
+      email,
+      password,
+    },
+  });
+  const signupRes = createResponse();
+  await handler(signupReq, signupRes);
+  assert.equal(signupRes.statusCode, 200);
+  const cookie = String(signupRes.headers["set-cookie"] || "");
+  assert.match(cookie, /bills_account_session=/i);
+
+  const changeReq = createRequest({
+    method: "POST",
+    headers: authHeaders({ cookie }),
+    body: {
+      action: "change-password",
+      currentPassword: "Wrong-pass-123",
+      newPassword: "Updated-pass-456",
+    },
+  });
+  const changeRes = createResponse();
+  await handler(changeReq, changeRes);
+  assert.equal(changeRes.statusCode, 401);
+  assert.equal(changeRes.body?.error, "Invalid email or password.");
+});
+
+test("account auth change-password updates credentials and invalidates prior session", async () => {
+  const handler = await loadHandler();
+  const email = `change_pw_${Date.now()}@example.com`;
+  const oldPassword = "Strong-pass-123";
+  const newPassword = "Updated-pass-456";
+
+  const signupReq = createRequest({
+    method: "POST",
+    headers: authHeaders(),
+    body: {
+      action: "signup",
+      email,
+      password: oldPassword,
+    },
+  });
+  const signupRes = createResponse();
+  await handler(signupReq, signupRes);
+  assert.equal(signupRes.statusCode, 200);
+  const oldCookie = String(signupRes.headers["set-cookie"] || "");
+  assert.match(oldCookie, /bills_account_session=/i);
+
+  const changeReq = createRequest({
+    method: "POST",
+    headers: authHeaders({ cookie: oldCookie }),
+    body: {
+      action: "change-password",
+      currentPassword: oldPassword,
+      newPassword,
+    },
+  });
+  const changeRes = createResponse();
+  await handler(changeReq, changeRes);
+  assert.equal(changeRes.statusCode, 200);
+  assert.equal(changeRes.body?.ok, true);
+  const newCookie = String(changeRes.headers["set-cookie"] || "");
+  assert.match(newCookie, /bills_account_session=/i);
+
+  const oldSessionReq = createRequest({
+    method: "GET",
+    headers: {
+      host: "app.local",
+      cookie: oldCookie,
+    },
+  });
+  const oldSessionRes = createResponse();
+  await handler(oldSessionReq, oldSessionRes);
+  assert.equal(oldSessionRes.statusCode, 200);
+  assert.equal(oldSessionRes.body?.user, null);
+
+  const newSessionReq = createRequest({
+    method: "GET",
+    headers: {
+      host: "app.local",
+      cookie: newCookie,
+    },
+  });
+  const newSessionRes = createResponse();
+  await handler(newSessionReq, newSessionRes);
+  assert.equal(newSessionRes.statusCode, 200);
+  assert.equal(newSessionRes.body?.user?.email, email.toLowerCase());
+
+  const oldLoginReq = createRequest({
+    method: "POST",
+    headers: authHeaders(),
+    body: {
+      action: "login",
+      email,
+      password: oldPassword,
+    },
+  });
+  const oldLoginRes = createResponse();
+  await handler(oldLoginReq, oldLoginRes);
+  assert.equal(oldLoginRes.statusCode, 401);
+  assert.equal(oldLoginRes.body?.error, "Invalid email or password.");
+
+  const newLoginReq = createRequest({
+    method: "POST",
+    headers: authHeaders(),
+    body: {
+      action: "login",
+      email,
+      password: newPassword,
+    },
+  });
+  const newLoginRes = createResponse();
+  await handler(newLoginReq, newLoginRes);
+  assert.equal(newLoginRes.statusCode, 200);
+  assert.equal(newLoginRes.body?.ok, true);
+});
+
 test("account auth invalidates prior session after recovery password reset", async () => {
   const handler = await loadHandler();
   const email = `session_version_${Date.now()}@example.com`;

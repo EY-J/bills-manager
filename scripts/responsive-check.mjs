@@ -409,6 +409,73 @@ async function openFirstBillDetails(page, viewportName) {
   await assertNoHorizontalOverflow(page, `${viewportName}: details opened from row`);
 }
 
+async function assertContainerScrollsIfNeeded(page, selector, label) {
+  const metrics = await page.evaluate((targetSelector) => {
+    const node = document.querySelector(targetSelector);
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+    const hasOverflow = node.scrollHeight > node.clientHeight + 1;
+    if (!hasOverflow) {
+      return {
+        hasOverflow: false,
+        scrollTopAfter: 0,
+      };
+    }
+    node.scrollTop = Math.max(1, node.scrollHeight - node.clientHeight);
+    return {
+      hasOverflow: true,
+      scrollTopAfter: node.scrollTop,
+    };
+  }, selector);
+
+  assert.ok(metrics, `${label}: missing container ${selector}`);
+  if (!metrics.hasOverflow) return;
+  assert.ok(
+    Number(metrics.scrollTopAfter) > 0,
+    `${label}: container did not scroll despite overflow`
+  );
+}
+
+async function openAccountModal(page) {
+  await clickFirstVisible(
+    page,
+    [
+      page.getByTestId("open-account-button").first(),
+      page.getByTestId("mobile-nav-account").first(),
+      page.locator('button[aria-label*="Open account"]:visible').first(),
+    ],
+    "Open account button"
+  );
+}
+
+async function assertAccountModalResponsive(page, viewportWidth, viewportName) {
+  const accountModal = page.getByTestId("account-modal").first();
+  await accountModal.waitFor({ state: "visible", timeout: 10_000 });
+  await assertElementFitsWidth(page, ".accountModal", viewportWidth, `${viewportName}: account modal`);
+  await assertNoHorizontalOverflow(page, `${viewportName}: account open`);
+
+  const changePasswordToggle = accountModal
+    .getByRole("button", { name: /change password|cancel password change/i })
+    .first();
+  await changePasswordToggle.waitFor({ state: "visible", timeout: 10_000 });
+  await changePasswordToggle.click();
+
+  await accountModal
+    .locator('input[aria-label="Current password"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 });
+  await assertNoHorizontalOverflow(page, `${viewportName}: account change password open`);
+  await assertContainerScrollsIfNeeded(
+    page,
+    ".accountModal .settingsBody",
+    `${viewportName}: account scroll body`
+  );
+
+  await accountModal.getByTestId("account-close-button").first().click();
+  await accountModal.waitFor({ state: "hidden", timeout: 10_000 });
+}
+
 async function waitForTrackerOrAccountLocked(page, timeoutMs = 12_000) {
   const started = Date.now();
   let sawAccountLocked = false;
@@ -486,6 +553,10 @@ async function runViewportCheck(
     }
 
     await assertNoHorizontalOverflow(page, `${viewport.name}: root`);
+
+    await openAccountModal(page);
+    await assertAccountModalResponsive(page, viewport.width, viewport.name);
+    await assertNoHorizontalOverflow(page, `${viewport.name}: root after account modal`);
 
     await clickFirstVisible(
       page,

@@ -15,7 +15,7 @@ It is optimized for mobile app-like use, while still working well on desktop.
 - Backup and restore data (JSON) with integrity validation.
 - Undo support for important actions.
 - Settings for notification mode, compact mode, and table density.
-- Optional account login (email/password) with one-time recovery code and auto-sync across devices.
+- Optional account login (email/password) with password change, one-time recovery code reset, and auto-sync across devices.
 - Installable as a PWA on supported mobile browsers.
 
 ## Tech stack
@@ -60,6 +60,8 @@ Use `.env.example` as reference.
 - Recovery-code password reset:
   - New accounts receive a one-time 12-digit recovery code.
   - Keep it safe; it is required for password reset without email.
+- Signed-in password change:
+  - Users can update password from Account settings with current-password verification.
 - `AUTH_VERIFICATION_SECRET` (optional)
   - Separate hashing secret for signup verification codes.
 - `AUTH_DEBUG_TOKENS` (optional)

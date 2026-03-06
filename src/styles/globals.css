@@ -617,7 +617,22 @@ h1,h2,h3 { margin: 0; }
 
   .toastDock .appToast {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
+  }
+
+  .toastDock .noticeToast {
+    width: fit-content;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .toastDock .noticeToast > span:last-child {
+    flex: 0 1 auto;
+  }
+
+  .toastDock .toastInlineAction {
+    margin-left: auto;
   }
 
   .app {
@@ -2797,6 +2812,17 @@ h1,h2,h3 { margin: 0; }
 
 .accountModal .settingsActions {
   gap: 7px;
+}
+
+.accountModal .accountSubsectionTitle {
+  margin: 4px 2px -1px;
+}
+
+.accountModal .accountDangerHint {
+  margin: -1px 2px 2px;
+  color: #91a5cd;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .accountStatusFooter {

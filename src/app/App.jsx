@@ -19,6 +19,7 @@ import {
   validateBackupPayload,
 } from "../features/bills/billsService.js";
 import {
+  changeAccountPassword,
   completePasswordResetWithRecoveryCode,
   createAccount,
   deleteAccount,
@@ -1168,6 +1169,43 @@ export default function App() {
     }
   }
 
+  async function handleAccountChangePassword({ currentPassword, newPassword }) {
+    const cleanCurrentPassword = String(currentPassword || "");
+    const cleanNewPassword = String(newPassword || "");
+    if (!cleanCurrentPassword) {
+      return { ok: false, message: "Enter your current password." };
+    }
+    if (!cleanNewPassword) {
+      return { ok: false, message: "Enter your new password." };
+    }
+    if (accountBusy || accountSyncBusy) {
+      return { ok: false, message: "Please wait..." };
+    }
+
+    setAccountBusy(true);
+    try {
+      const result = await changeAccountPassword({
+        currentPassword: cleanCurrentPassword,
+        newPassword: cleanNewPassword,
+      });
+      const nextStorageMode = String(result?.storageMode || "").trim();
+      if (nextStorageMode) {
+        setAccountStorageMode(nextStorageMode);
+      }
+      if (result?.user) {
+        setAccountUser(result.user);
+      }
+      setNoticeToast("Password changed.");
+      return { ok: true, message: "Password changed successfully." };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not change password.";
+      setNoticeToast(message);
+      return { ok: false, message };
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
   async function handleAccountLogout() {
     if (accountBusy) return;
     setAccountBusy(true);
@@ -1740,6 +1778,7 @@ export default function App() {
             }
             onAccountSignupCreate={handleAccountSignupCreate}
             onAccountRecoveryReset={handleAccountRecoveryReset}
+            onAccountChangePassword={handleAccountChangePassword}
             onAccountLogout={handleAccountLogout}
             onAccountExport={handleAccountExport}
             onAccountDelete={handleAccountDelete}

@@ -167,6 +167,17 @@ export async function deleteAccount({ password }) {
   });
 }
 
+export async function changeAccountPassword({ currentPassword, newPassword }) {
+  return requestJson("/api/account-auth", {
+    method: "POST",
+    body: JSON.stringify({
+      action: "change-password",
+      currentPassword,
+      newPassword,
+    }),
+  });
+}
+
 export async function pullAccountBackup() {
   return requestJson("/api/account-sync", {
     method: "GET",

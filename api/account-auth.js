@@ -697,6 +697,13 @@ export default async function handler(req, res) {
   ) {
     action = "complete-password-reset-recovery";
   }
+  if (
+    action === "change-password" ||
+    action === "changepassword" ||
+    action === "update-password"
+  ) {
+    action = "change-password";
+  }
   if (action === "delete-account" || action === "deleteaccount" || action === "close-account") {
     action = "delete-account";
   }
@@ -709,10 +716,72 @@ export default async function handler(req, res) {
   if (
     action !== "signup" &&
     action !== "complete-password-reset-recovery" &&
+    action !== "change-password" &&
     action !== "delete-account" &&
     action !== "login"
   ) {
     return res.status(422).json({ ok: false, error: "Unsupported auth action." });
+  }
+
+  if (action === "change-password") {
+    const sessionUser = await resolveSessionRecord(req);
+    if (!sessionUser) {
+      return res.status(401).json({ ok: false, error: "Unauthorized." });
+    }
+
+    const currentPasswordCheck = validatePassword(payload.currentPassword);
+    if (!currentPasswordCheck.ok) {
+      return res.status(422).json({ ok: false, error: currentPasswordCheck.reason });
+    }
+    const newPasswordCheck = validateStrongPassword(payload.newPassword);
+    if (!newPasswordCheck.ok) {
+      return res.status(422).json({ ok: false, error: newPasswordCheck.reason });
+    }
+
+    if (currentPasswordCheck.value === newPasswordCheck.value) {
+      return res.status(422).json({
+        ok: false,
+        error: "New password must be different from current password.",
+      });
+    }
+
+    const validPassword = verifyPassword(
+      currentPasswordCheck.value,
+      sessionUser.passwordHash,
+      sessionUser.passwordSalt
+    );
+    if (!validPassword) {
+      await emitSecurityAlert({
+        type: "change-password-invalid-password",
+        severity: "warning",
+        message: "Password change attempt failed due to invalid current password.",
+        context: {
+          ip,
+          email: sessionUser.email,
+        },
+      });
+      return res.status(401).json({ ok: false, error: "Invalid email or password." });
+    }
+
+    const { hash, salt } = hashPassword(newPasswordCheck.value);
+    const user = await updateUserPassword({
+      email: sessionUser.email,
+      passwordHash: hash,
+      passwordSalt: salt,
+    });
+    if (!user) {
+      return res.status(400).json({
+        ok: false,
+        error: "Could not change password. Please try again.",
+      });
+    }
+
+    if (!issueSessionOrFail(res, req, user)) return;
+    return res.status(200).json({
+      ok: true,
+      user: publicUser(user),
+      storageMode: storeMode,
+    });
   }
 
   if (action === "delete-account") {
