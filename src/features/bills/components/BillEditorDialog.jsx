@@ -1,5 +1,9 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
-import { startOfToday, toISODate } from "../../../lib/date/date.js";
+import {
+  isISODateString,
+  startOfToday,
+  toISODate,
+} from "../../../lib/date/date.js";
 import { BILL_CADENCE_OPTIONS, BILL_REMINDER_OPTIONS } from "../billsUtils.js";
 const { useRef } = React;
 
@@ -32,13 +36,22 @@ function parseStatementAmountsInput(value) {
     .map((n) => Number(n.toFixed(2)));
 }
 
+function defaultDueDateValue() {
+  return toISODate(startOfToday());
+}
+
 function buildInitialDraft(bill) {
+  const cadence = bill?.cadence || "monthly";
+  const rawDueDate =
+    typeof bill?.dueDate === "string" ? bill.dueDate.trim() : "";
+  const noDueDate = cadence === "one-time" && rawDueDate.length === 0;
   return {
     name: bill?.name || "",
     category: bill?.category || "Other",
-    dueDate: bill?.dueDate || toISODate(startOfToday()),
+    dueDate: rawDueDate || defaultDueDateValue(),
     amount: String(bill?.amount ?? 0),
-    cadence: bill?.cadence || "monthly",
+    cadence,
+    noDueDate,
     reminderDays: String(bill?.reminderDays ?? 3),
     notes: bill?.notes || "",
     totalMonths: String(bill?.totalMonths ?? 0),
@@ -53,7 +66,9 @@ function normalizeDraftForCompare(draft) {
   return {
     name: String(draft.name || "").trim(),
     category: draft.category || "Other",
-    dueDate: draft.dueDate || "",
+    dueDate:
+      draft.cadence === "one-time" && draft.noDueDate ? "" : draft.dueDate || "",
+    noDueDate: Boolean(draft.cadence === "one-time" && draft.noDueDate),
     amount: Number(draft.amount || 0),
     cadence: draft.cadence || "monthly",
     reminderDays: Number(draft.reminderDays || 3),
@@ -99,10 +114,12 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
     if (!draft.name.trim()) return false;
     const amount = Number(draft.amount);
     const isStatementPlan = draft.cadence === "statement-plan";
+    const requiresDueDate = draft.cadence !== "one-time" || !draft.noDueDate;
     const statementAmounts = parseStatementAmountsInput(draft.statementAmounts);
     const totalMonths = Number(draft.totalMonths);
     const paidMonths = Number(draft.paidMonths);
     if (Number.isNaN(amount) || amount < 0) return false;
+    if (requiresDueDate && !isISODateString(draft.dueDate)) return false;
     if (isStatementPlan && statementAmounts.length === 0) return false;
     if (isStatementPlan) return true;
     if (!Number.isInteger(totalMonths) || totalMonths < 0) return false;
@@ -113,7 +130,9 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
   }, [
     draft.name,
     draft.amount,
+    draft.dueDate,
     draft.cadence,
+    draft.noDueDate,
     draft.statementAmounts,
     draft.totalMonths,
     draft.paidMonths,
@@ -129,7 +148,8 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
     return {
       name: draft.name.trim(),
       category: draft.category,
-      dueDate: draft.dueDate,
+      dueDate:
+        draft.cadence === "one-time" && draft.noDueDate ? "" : draft.dueDate,
       amount: Number(draft.amount),
       cadence: draft.cadence,
       reminderDays: Number(draft.reminderDays || 3),
@@ -138,6 +158,26 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
       paidMonths: Number(draft.paidMonths || 0),
       statementAmounts: parseStatementAmountsInput(draft.statementAmounts),
     };
+  }
+
+  function handleCadenceChange(nextCadence) {
+    setDraft((current) => ({
+      ...current,
+      cadence: nextCadence,
+      noDueDate: nextCadence === "one-time" ? current.noDueDate : false,
+      dueDate:
+        nextCadence === "one-time" || current.dueDate
+          ? current.dueDate
+          : defaultDueDateValue(),
+    }));
+  }
+
+  function handleNoDueDateChange(nextNoDueDate) {
+    setDraft((current) => ({
+      ...current,
+      noDueDate: nextNoDueDate,
+      dueDate: current.dueDate || defaultDueDateValue(),
+    }));
   }
 
   function handleRequestClose() {
@@ -180,9 +220,8 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               ) : null}
             </div>
             <p className="muted">
-              Set the due date and amount. Recurring bills roll to the next cycle
-              when fully paid, while one-time and statement-plan bills support
-              full payoff behavior.
+              Set the amount and cadence. One-time debts can be saved without a
+              due date, while recurring and statement-plan bills still track one.
             </p>
           </div>
           <button className="iconBtn" disabled={isSaving} onClick={handleRequestClose} aria-label="Close editor">
@@ -227,13 +266,28 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               <label>Due date</label>
               <input
                 className="input"
-                disabled={isSaving}
+                disabled={isSaving || (draft.cadence === "one-time" && draft.noDueDate)}
                 type="date"
-                value={draft.dueDate}
+                value={
+                  draft.cadence === "one-time" && draft.noDueDate ? "" : draft.dueDate
+                }
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, dueDate: e.target.value }))
                 }
               />
+              {draft.cadence === "one-time" ? (
+                <label className="editorCheckRow">
+                  <input
+                    className="editorCheckInput"
+                    type="checkbox"
+                    checked={Boolean(draft.noDueDate)}
+                    disabled={isSaving}
+                    onChange={(e) => handleNoDueDateChange(e.target.checked)}
+                  />
+                  <span className="editorCheckBox" aria-hidden="true" />
+                  <span>No due date</span>
+                </label>
+              ) : null}
             </div>
           </div>
 
@@ -317,9 +371,7 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
                 className="select"
                 disabled={isSaving}
                 value={draft.cadence}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, cadence: e.target.value }))
-                }
+                onChange={(e) => handleCadenceChange(e.target.value)}
               >
                 {BILL_CADENCE_OPTIONS.map((cadence) => (
                   <option key={cadence} value={cadence}>
@@ -333,7 +385,7 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               <label>Reminder lead time</label>
               <select
                 className="select"
-                disabled={isSaving}
+                disabled={isSaving || (draft.cadence === "one-time" && draft.noDueDate)}
                 value={draft.reminderDays}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, reminderDays: e.target.value }))

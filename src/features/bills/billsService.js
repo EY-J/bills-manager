@@ -131,9 +131,15 @@ function sanitizePaymentShape(payment, fallbackDate) {
 }
 
 function sanitizeBillShape(bill, fallbackDate) {
-  const dueDate = isValidISODate(bill?.dueDate) ? bill.dueDate : fallbackDate;
   const baseAmount = sanitizeAmount(bill?.amount);
   const cadence = typeof bill?.cadence === "string" ? bill.cadence : "monthly";
+  const rawDueDate =
+    typeof bill?.dueDate === "string" ? bill.dueDate.trim() : "";
+  const dueDate = isValidISODate(rawDueDate)
+    ? rawDueDate
+    : cadence === "one-time" && rawDueDate.length === 0
+      ? ""
+      : fallbackDate;
   const statementAmounts =
     cadence === "statement-plan"
       ? sanitizeStatementAmounts(bill?.statementAmounts, baseAmount)
@@ -147,8 +153,9 @@ function sanitizeBillShape(bill, fallbackDate) {
       ? Number(statementAmounts[statementIndex] || 0)
       : baseAmount;
   const paymentsRaw = Array.isArray(bill?.payments) ? bill.payments : [];
+  const paymentFallbackDate = dueDate || fallbackDate;
   const payments = sortPaymentsDesc(
-    paymentsRaw.map((p) => sanitizePaymentShape(p, dueDate))
+    paymentsRaw.map((p) => sanitizePaymentShape(p, paymentFallbackDate))
   );
 
   const totalMonths =

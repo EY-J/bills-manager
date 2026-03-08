@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   formatMoney,
   formatShortDate,
+  isISODateString,
   parseISODate,
   startOfToday,
   toISODate,
@@ -43,7 +44,7 @@ function monthKeyFromDate(date) {
 }
 
 function monthKeyFromIso(isoDate) {
-  if (!isoDate) return "";
+  if (!isISODateString(isoDate)) return "";
   return monthKeyFromDate(parseISODate(isoDate));
 }
 
@@ -82,13 +83,42 @@ function billTone(bill) {
   return "upcoming";
 }
 
-function pickDayTone(dayBills) {
-  if (!Array.isArray(dayBills) || dayBills.length === 0) return "upcoming";
-  return dayBills.reduce((best, bill) => {
-    const nextTone = billTone(bill);
-    if (TONE_PRIORITY[nextTone] > TONE_PRIORITY[best]) return nextTone;
-    return best;
-  }, "upcoming");
+function paymentToneForBill(bill) {
+  if (bill?.archived) return "archived";
+  if (bill?.meta?.partiallyPaid) return "partial";
+  return "paid";
+}
+
+function pickDayTone(dayBills, dayPayments = []) {
+  if (Array.isArray(dayBills) && dayBills.length > 0) {
+    return dayBills.reduce((best, bill) => {
+      const nextTone = billTone(bill);
+      if (TONE_PRIORITY[nextTone] > TONE_PRIORITY[best]) return nextTone;
+      return best;
+    }, "upcoming");
+  }
+  if (Array.isArray(dayPayments) && dayPayments.length > 0) {
+    return dayPayments.reduce((best, payment) => {
+      const nextTone = payment?.tone || "paid";
+      if (TONE_PRIORITY[nextTone] > TONE_PRIORITY[best]) return nextTone;
+      return best;
+    }, "paid");
+  }
+  return "upcoming";
+}
+
+function isVisibleCalendarPayment(payment) {
+  if (!payment || payment.autoSeedPaidMonths === true) return false;
+  if (payment.note === "Unpaid rollover") return false;
+  if (typeof payment.date !== "string" || !payment.date.trim()) return false;
+  return Number(payment.amount || 0) > 0;
+}
+
+function paymentMetaLabel(entry) {
+  const amountLabel = `Paid ${formatMoney(entry.amount)}`;
+  if (entry.note) return `${amountLabel} | ${entry.note}`;
+  if (entry.tone === "partial") return `${amountLabel} | Partial payment`;
+  return `${amountLabel} | Payment recorded`;
 }
 
 function statusLabelForBill(bill) {
@@ -126,7 +156,7 @@ function statusLabelForBill(bill) {
 function normalizeBillsByDate(bills) {
   const out = new Map();
   (Array.isArray(bills) ? bills : []).forEach((bill) => {
-    if (!bill || typeof bill.dueDate !== "string") return;
+    if (!bill || !isISODateString(bill.dueDate)) return;
     const existing = out.get(bill.dueDate) || [];
     existing.push(bill);
     out.set(bill.dueDate, existing);
@@ -138,6 +168,73 @@ function normalizeBillsByDate(bills) {
   });
 
   return out;
+}
+
+function buildPaymentEntriesByDate(bills) {
+  const out = new Map();
+  (Array.isArray(bills) ? bills : []).forEach((bill) => {
+    const payments = Array.isArray(bill?.payments) ? bill.payments : [];
+    payments.forEach((payment, index) => {
+      if (!isVisibleCalendarPayment(payment)) return;
+      const iso = String(payment.date || "").trim();
+      if (!iso) return;
+      const existing = out.get(iso) || [];
+      existing.push({
+        id: `${bill.id}:${payment.id || iso}:${index}`,
+        billId: bill.id,
+        billName: bill.name,
+        amount: Number(payment.amount || 0),
+        note: typeof payment.note === "string" ? payment.note.trim() : "",
+        tone: paymentToneForBill(bill),
+      });
+      out.set(iso, existing);
+    });
+  });
+
+  out.forEach((entries, key) => {
+    entries.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+    out.set(key, entries);
+  });
+
+  return out;
+}
+
+function buildMonthActivityDates(viewMonthKey, dueBills, paymentsByDate) {
+  const dates = new Set();
+  (Array.isArray(dueBills) ? dueBills : []).forEach((bill) => {
+    if (monthKeyFromIso(bill?.dueDate) === viewMonthKey) {
+      dates.add(bill.dueDate);
+    }
+  });
+  paymentsByDate.forEach((_, iso) => {
+    if (monthKeyFromIso(iso) === viewMonthKey) {
+      dates.add(iso);
+    }
+  });
+  return Array.from(dates).sort((a, b) => a.localeCompare(b));
+}
+
+function summarizeSelectedDate(dueCount, paymentCount) {
+  const parts = [];
+  if (dueCount > 0) {
+    parts.push(`${dueCount} due bill${dueCount === 1 ? "" : "s"}`);
+  }
+  if (paymentCount > 0) {
+    parts.push(`${paymentCount} payment${paymentCount === 1 ? "" : "s"}`);
+  }
+  if (parts.length === 0) return "No activity";
+  return parts.join(" | ");
+}
+
+function activityLabel(dueCount, paymentCount) {
+  const parts = [];
+  if (dueCount > 0) {
+    parts.push(`${dueCount} due bill${dueCount === 1 ? "" : "s"}`);
+  }
+  if (paymentCount > 0) {
+    parts.push(`${paymentCount} payment${paymentCount === 1 ? "" : "s"}`);
+  }
+  return parts.join(", ");
 }
 
 function buildCells(viewMonthDate) {
@@ -180,26 +277,29 @@ export default function BillsCalendarCard({
     [bills]
   );
   const billsByDate = useMemo(() => normalizeBillsByDate(dueBills), [dueBills]);
+  const paymentsByDate = useMemo(() => buildPaymentEntriesByDate(dueBills), [dueBills]);
   const cells = useMemo(() => buildCells(viewMonthDate), [viewMonthDate]);
 
   const viewMonthKey = monthKeyFromDate(viewMonthDate);
-  const monthBills = useMemo(
-    () =>
-      dueBills
-        .filter((bill) => monthKeyFromIso(bill.dueDate) === viewMonthKey)
-        .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [dueBills, viewMonthKey]
+  const monthActivityDates = useMemo(
+    () => buildMonthActivityDates(viewMonthKey, dueBills, paymentsByDate),
+    [dueBills, paymentsByDate, viewMonthKey]
   );
 
   const selectedDate = useMemo(() => {
     const isSelectedInMonth = monthKeyFromIso(selectedDateRaw) === viewMonthKey;
     if (isSelectedInMonth) return selectedDateRaw;
-    if (monthBills.length > 0) return monthBills[0].dueDate;
+    if (monthActivityDates.length > 0) return monthActivityDates[0];
     return toISODate(viewMonthDate);
-  }, [selectedDateRaw, monthBills, viewMonthDate, viewMonthKey]);
+  }, [selectedDateRaw, monthActivityDates, viewMonthDate, viewMonthKey]);
 
   const selectedBills = billsByDate.get(selectedDate) || [];
+  const selectedPayments = paymentsByDate.get(selectedDate) || [];
   const selectedDateLabel = formatShortDate(selectedDate);
+  const selectedSummary = summarizeSelectedDate(
+    selectedBills.length,
+    selectedPayments.length
+  );
 
   const rootClassName = `${contained ? "" : "card "}calendarCard${
     compact ? " isCompact" : ""
@@ -453,28 +553,33 @@ export default function BillsCalendarCard({
         <div className="calendarGrid">
           {cells.map((cell) => {
             const dayBills = billsByDate.get(cell.iso) || [];
-            const tone = pickDayTone(dayBills);
+            const dayPayments = paymentsByDate.get(cell.iso) || [];
+            const tone = pickDayTone(dayBills, dayPayments);
             const isSelected = cell.iso === selectedDate;
-            const hasDue = dayBills.length > 0;
+            const dueCount = dayBills.length;
+            const paymentCount = dayPayments.length;
+            const activityCount = dueCount + paymentCount;
+            const hasActivity = activityCount > 0;
+            const label = activityLabel(dueCount, paymentCount);
             return (
               <button
                 key={cell.iso}
                 type="button"
                 className={`calendarDayBtn ${cell.inMonth ? "" : "isOutMonth"} ${
                   isSelected ? "isSelected" : ""
-                } ${hasDue ? "hasDue" : ""} calendarTone-${tone}`}
+                } ${hasActivity ? "hasDue" : ""} calendarTone-${tone}`}
                 data-testid={`calendar-day-${cell.iso}`}
                 onClick={() => setSelectedDateRaw(cell.iso)}
                 aria-pressed={isSelected}
                 aria-label={`${formatShortDate(cell.iso)}${
-                  hasDue ? `, ${dayBills.length} bill${dayBills.length === 1 ? "" : "s"} due` : ""
+                  label ? `, ${label}` : ""
                 }`}
               >
                 <span className="calendarDayNum">{cell.date.getDate()}</span>
-                {hasDue ? (
+                {hasActivity ? (
                   <span className="calendarDayMeta">
                     <span className={`calendarDayDot calendarTone-${tone}`} aria-hidden="true" />
-                    <span>{dayBills.length}</span>
+                    <span>{activityCount}</span>
                   </span>
                 ) : null}
               </button>
@@ -486,35 +591,58 @@ export default function BillsCalendarCard({
       <div className="calendarSelectedPanel" data-testid="calendar-selected-panel">
         <div className="calendarSelectedHead">
           <strong>{selectedDateLabel}</strong>
-          <span className="muted small">
-            {selectedBills.length} due bill{selectedBills.length === 1 ? "" : "s"}
-          </span>
+          <span className="muted small">{selectedSummary}</span>
         </div>
 
-        {selectedBills.length === 0 ? (
-          <p className="muted small">No bills due on this date.</p>
-        ) : (
-          <div className="calendarDueList">
-            {selectedBills.map((bill) => {
-              const tone = billTone(bill);
-              return (
+        {selectedBills.length === 0 && selectedPayments.length === 0 ? (
+          <p className="muted small">No due bills or payments on this date.</p>
+        ) : null}
+
+        {selectedBills.length > 0 ? (
+          <>
+            <p className="muted small">Due bills</p>
+            <div className="calendarDueList">
+              {selectedBills.map((bill) => {
+                const tone = billTone(bill);
+                return (
+                  <button
+                    key={bill.id}
+                    type="button"
+                    className={`calendarDueItem calendarTone-${tone}`}
+                    data-testid={`calendar-due-item-${bill.id}`}
+                    onClick={() => onOpenBill?.(bill.id)}
+                  >
+                    <span className="calendarDueName">{bill.name}</span>
+                    <span className="calendarDueMeta">
+                      {formatMoney(bill.meta?.remainingAmount ?? bill.amount)} |{" "}
+                      {statusLabelForBill(bill)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ) : null}
+
+        {selectedPayments.length > 0 ? (
+          <>
+            <p className="muted small">Payments recorded</p>
+            <div className="calendarDueList">
+              {selectedPayments.map((entry) => (
                 <button
-                  key={bill.id}
+                  key={entry.id}
                   type="button"
-                  className={`calendarDueItem calendarTone-${tone}`}
-                  data-testid={`calendar-due-item-${bill.id}`}
-                  onClick={() => onOpenBill?.(bill.id)}
+                  className={`calendarDueItem calendarTone-${entry.tone}`}
+                  data-testid={`calendar-payment-item-${entry.id}`}
+                  onClick={() => onOpenBill?.(entry.billId)}
                 >
-                  <span className="calendarDueName">{bill.name}</span>
-                  <span className="calendarDueMeta">
-                    {formatMoney(bill.meta?.remainingAmount ?? bill.amount)} |{" "}
-                    {statusLabelForBill(bill)}
-                  </span>
+                  <span className="calendarDueName">{entry.billName}</span>
+                  <span className="calendarDueMeta">{paymentMetaLabel(entry)}</span>
                 </button>
-              );
-            })}
-          </div>
-        )}
+              ))}
+            </div>
+          </>
+        ) : null}
       </div>
     </section>
   );

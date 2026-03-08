@@ -187,6 +187,30 @@ test("markBillPaidAndAdvance settles one-time bills without advancing due date",
   assert.equal(next.payments[0].settledCycles, 1);
 });
 
+test("markBillPaidAndAdvance keeps blank due date for one-time personal debt", () => {
+  const bill = {
+    id: "bill-one-time-no-due",
+    name: "Friend debt",
+    category: "Debt",
+    dueDate: "",
+    amount: 500,
+    notes: "",
+    payments: [],
+    cadence: "one-time",
+    reminderDays: 3,
+    totalMonths: 0,
+    paidMonths: 0,
+    cyclePaidAmount: 120,
+  };
+
+  const next = markBillPaidAndAdvance(bill);
+
+  assert.equal(next.dueDate, "");
+  assert.equal(next.cyclePaidAmount, 500);
+  assert.equal(next.payments[0].amount, 380);
+  assert.equal(next.payments[0].settledCycles, 1);
+});
+
 test("deletePaymentFromBill recalculates one-time paid state from remaining history", () => {
   const bill = {
     id: "bill-one-time-delete",

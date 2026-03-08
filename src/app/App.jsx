@@ -52,8 +52,10 @@ const LAST_BACKUP_AT_KEY = "bills_last_backup_at";
 const LAST_ACCOUNT_SYNC_AT_KEY = "bills_last_account_sync_at";
 const ACCOUNT_AUTO_SYNC_KEY = "bills_account_auto_sync";
 const ACCOUNT_KNOWN_KEY = "bills_account_known_v1";
+const ACCOUNT_LOCAL_USER_KEY = "bills_account_user_v1";
 const ACCOUNT_E2E_LOCAL_SESSION_KEY = "__bills_e2e_unlock_session_v1";
 const ACCOUNT_PREVIEW_ROTATE_MS = 4200;
+const SESSION_RESTORE_TIMEOUT_MS = 3500;
 const ACCOUNT_FEATURE_PREVIEWS = [
   {
     id: "tracker",
@@ -213,6 +215,42 @@ function readLocalE2EAccountSessionUser() {
   };
 }
 
+function normalizeStoredAccountUser(value) {
+  if (!value || typeof value !== "object") return null;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  if (!id) return null;
+  const email = typeof value.email === "string" ? value.email.trim().toLowerCase() : "";
+  return { id, email };
+}
+
+function readCachedAccountUser() {
+  const e2eUser = readLocalE2EAccountSessionUser();
+  if (e2eUser) return e2eUser;
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem(ACCOUNT_LOCAL_USER_KEY);
+    if (!raw) return null;
+    return normalizeStoredAccountUser(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAccountUser(user) {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeStoredAccountUser(user);
+  try {
+    if (!normalized) {
+      localStorage.removeItem(ACCOUNT_LOCAL_USER_KEY);
+      return;
+    }
+    localStorage.setItem(ACCOUNT_LOCAL_USER_KEY, JSON.stringify(normalized));
+  } catch {
+    // Ignore storage failures; auth still resolves from the server session.
+  }
+}
+
 export default function App() {
   const {
     bills,
@@ -232,6 +270,11 @@ export default function App() {
     notifyEnabled,
     setNotifyEnabled,
   } = useBills();
+  const initialLocalSessionUserRef = useRef(undefined);
+
+  if (initialLocalSessionUserRef.current === undefined) {
+    initialLocalSessionUserRef.current = readCachedAccountUser();
+  }
 
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all"); // all | dueSoon | overdue | thisMonth | archived
@@ -253,7 +296,7 @@ export default function App() {
   const [accountRecoveryCode, setAccountRecoveryCode] = useState("");
   const [hasKnownAccount, setHasKnownAccount] = useState(() => {
     try {
-      if (readLocalE2EAccountSessionUser()) {
+      if (readCachedAccountUser()) {
         return true;
       }
       return localStorage.getItem(ACCOUNT_KNOWN_KEY) === "1";
@@ -297,7 +340,12 @@ export default function App() {
       return "";
     }
   });
-  const [accountUser, setAccountUser] = useState(() => readLocalE2EAccountSessionUser());
+  const [accountSessionReady, setAccountSessionReady] = useState(() =>
+    Boolean(initialLocalSessionUserRef.current)
+  );
+  const [accountUser, setAccountUser] = useState(
+    () => initialLocalSessionUserRef.current || null
+  );
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountSyncBusy, setAccountSyncBusy] = useState(false);
   const [accountStorageMode, setAccountStorageMode] = useState("unknown");
@@ -337,7 +385,10 @@ export default function App() {
   const currentUndoToast = undoQueue[0] || null;
   const queuedUndoCount = Math.max(undoQueue.length - 1, 0);
   const noticeToastIsError = isErrorNoticeMessage(noticeToast);
-  const accountRequired = !accountUser?.id;
+  const accountSignedIn = Boolean(accountUser?.id);
+  const accountSessionPending = !accountSessionReady;
+  const accountRequired = accountSessionReady && !accountSignedIn;
+  const accountBlocked = accountSessionPending || accountRequired;
   const accountEntryMode = hasKnownAccount ? "signin" : "signup";
   const accountPreviewCount = ACCOUNT_FEATURE_PREVIEWS.length;
 
@@ -350,6 +401,10 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    writeCachedAccountUser(accountUser);
+  }, [accountUser]);
+
   const openAccountDialog = useCallback((mode = "signin") => {
     const nextMode = String(mode || "").trim().toLowerCase() === "signup" ? "signup" : "signin";
     setAccountEntryAuthMode(nextMode);
@@ -357,13 +412,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!accountRequired) return;
+    if (!accountBlocked) return;
     setSettingsOpen(false);
     setCalendarOpen(false);
     setEditorOpen(false);
     setDetailsOpen(false);
     setClearConfirmOpen(false);
-  }, [accountRequired]);
+  }, [accountBlocked]);
 
   const showPrevAccountPreview = useCallback(() => {
     setAccountPreviewIndex((current) =>
@@ -456,6 +511,7 @@ export default function App() {
       if (filter === "dueSoon") return b.meta.dueSoon;
       if (filter === "overdue") return b.meta.overdue;
       if (filter === "thisMonth") {
+        if (!b.meta.hasDueDate) return false;
         const due = b.meta.dueDateObj;
         return (
           due.getMonth() === currentMonth && due.getFullYear() === currentYear
@@ -648,6 +704,7 @@ export default function App() {
     const year = now.getFullYear();
 
     const totalDueThisMonth = activeEnriched.reduce((sum, b) => {
+      if (!b.meta.hasDueDate) return sum;
       const due = b.meta.dueDateObj;
       if (due.getMonth() !== month || due.getFullYear() !== year) return sum;
       return sum + Number((b.meta.remainingAmount ?? b.amount) || 0);
@@ -714,9 +771,17 @@ export default function App() {
     if (accountSessionInitRef.current) return undefined;
     accountSessionInitRef.current = true;
     let cancelled = false;
+    let sessionTimeoutId = 0;
     (async () => {
       try {
-        const result = await getAccountSession();
+        const result = await Promise.race([
+          getAccountSession(),
+          new Promise((_, reject) => {
+            sessionTimeoutId = window.setTimeout(() => {
+              reject(new Error("Session restore timed out."));
+            }, SESSION_RESTORE_TIMEOUT_MS);
+          }),
+        ]);
         if (cancelled) return;
         if (result?.storageMode) {
           setAccountStorageMode(result.storageMode);
@@ -754,9 +819,18 @@ export default function App() {
               setAccountSyncBusy(false);
             }
           }
+        } else {
+          setAccountUser(null);
         }
       } catch {
         // Ignore session restore failures and continue offline-first.
+      } finally {
+        if (sessionTimeoutId) {
+          window.clearTimeout(sessionTimeoutId);
+        }
+        if (!cancelled) {
+          setAccountSessionReady(true);
+        }
       }
     })();
 
@@ -1673,24 +1747,33 @@ export default function App() {
     <div className={`app ${compactMode ? "compactMode" : ""} density-${tableDensity}`}>
       <Header
         onOpenSettings={() => {
-          if (accountRequired) {
-            openAccountDialog(accountEntryMode);
+          if (accountBlocked) {
+            if (accountRequired) {
+              openAccountDialog(accountEntryMode);
+            }
             return;
           }
           setSettingsOpen(true);
         }}
-        onOpenAccount={() => openAccountDialog(accountRequired ? accountEntryMode : "signin")}
+        onOpenAccount={() => {
+          if (accountSessionPending) return;
+          openAccountDialog(accountRequired ? accountEntryMode : "signin");
+        }}
         onOpenCalendar={() => {
-          if (accountRequired) {
-            openAccountDialog(accountEntryMode);
+          if (accountBlocked) {
+            if (accountRequired) {
+              openAccountDialog(accountEntryMode);
+            }
             return;
           }
           setCalendarOpen(true);
         }}
-        accountSignedIn={Boolean(accountUser?.id)}
+        accountSignedIn={accountSignedIn}
         onAdd={() => {
-          if (accountRequired) {
-            openAccountDialog(accountEntryMode);
+          if (accountBlocked) {
+            if (accountRequired) {
+              openAccountDialog(accountEntryMode);
+            }
             return;
           }
           setEditingId(null);
@@ -1698,7 +1781,7 @@ export default function App() {
         }}
       />
 
-      {settingsOpen && !accountRequired ? (
+      {settingsOpen && !accountBlocked ? (
         <Suspense fallback={null}>
           <SettingsDialog
             open={settingsOpen}
@@ -1796,7 +1879,7 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {calendarOpen && !accountRequired ? (
+      {calendarOpen && !accountBlocked ? (
         <Suspense fallback={null}>
           <CalendarDialog
             open={calendarOpen}
@@ -1820,7 +1903,22 @@ export default function App() {
       ) : null}
 
       <div className="container">
-        {accountRequired ? (
+        {accountSessionPending ? (
+          <div className="accountLockedShowcase">
+            <section
+              className="accountOnboardingNudge"
+              aria-label="Restoring account session"
+              data-testid="account-session-restore-card"
+            >
+              <div className="accountOnboardingCopy">
+                <p className="accountOnboardingTitle">Restoring session</p>
+                <p className="accountOnboardingText">
+                  Checking your saved account so this device stays signed in.
+                </p>
+              </div>
+            </section>
+          </div>
+        ) : accountRequired ? (
           <div className="accountLockedShowcase">
             <section
               className="accountOnboardingNudge"
@@ -1938,7 +2036,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {!accountRequired ? (
+        {!accountBlocked ? (
           <>
             <div ref={dueSoonRef}>
               <DueSoonBanner
@@ -2122,10 +2220,10 @@ export default function App() {
         ) : null}
       </div>
 
-      {!hasBlockingModal && !accountRequired ? (
+      {!hasBlockingModal && !accountBlocked ? (
         <MobileBottomNav
           active={mobileTab}
-          accountSignedIn={Boolean(accountUser?.id)}
+          accountSignedIn={accountSignedIn}
           onSelect={(tab) => {
             setMobileTab(tab);
             if (tab === "bills") scrollToRef(billsRef);
@@ -2137,7 +2235,7 @@ export default function App() {
         />
       ) : null}
 
-      {editorOpen && !accountRequired ? (
+      {editorOpen && !accountBlocked ? (
         <Suspense fallback={null}>
           <BillEditorDialog
             onClose={() => setEditorOpen(false)}
@@ -2158,7 +2256,7 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {detailsOpen && !accountRequired ? (
+      {detailsOpen && !accountBlocked ? (
         <Suspense fallback={null}>
           <BillDetailsDialog
             open={detailsOpen}
@@ -2236,7 +2334,7 @@ export default function App() {
         </Suspense>
       ) : null}
 
-      {clearConfirmOpen && !accountRequired ? (
+      {clearConfirmOpen && !accountBlocked ? (
         <div
           className="modalBackdrop confirmBackdrop"
           onMouseDown={() => setClearConfirmOpen(false)}

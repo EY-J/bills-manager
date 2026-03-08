@@ -1,6 +1,6 @@
 {
-  "name": "Bills Tracker",
-  "short_name": "Bills",
+  "name": "Pocket Ledger",
+  "short_name": "Pocket Ledger",
   "description": "Track monthly bills and payments offline.",
   "start_url": "/",
   "scope": "/",

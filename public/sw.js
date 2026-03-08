@@ -45,6 +45,12 @@ self.addEventListener("fetch", (event) => {
   // Keep non-http schemes untouched.
   if (url.protocol !== "http:" && url.protocol !== "https:") return;
 
+  // Never cache API responses. Session/bootstrap requests must stay fresh.
+  if (url.origin === self.location.origin && url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   // App navigation: network first, fallback to cached app shell.
   if (request.mode === "navigate") {
     event.respondWith(

@@ -22,6 +22,10 @@ function getBillStatus(bill) {
     };
   }
 
+  if (!bill.meta.hasDueDate) {
+    return { label: "No due date", tone: "upcoming" };
+  }
+
   if (bill.meta.daysToDue === 0) {
     return { label: "Due today", tone: "dueSoon" };
   }
@@ -121,6 +125,7 @@ export default function BillsTable({
             const plan = getPlanProgress(b);
             const status = getBillStatus(b);
             const markPaidLoading = Boolean(isMarkPaidLoading?.(b.id));
+            const hasDueDate = Boolean(b.meta.hasDueDate);
             const mobileStatus =
               status.tone === "overdue"
                 ? "Overdue"
@@ -134,7 +139,7 @@ export default function BillsTable({
                       ? status.label
                       : status.tone === "archived"
                         ? "Archived"
-                        : "Upcoming";
+                        : status.label;
             const noteHit =
               q.length > 0 &&
               (b.notes || "").toLowerCase().includes(q.toLowerCase());
@@ -231,18 +236,26 @@ export default function BillsTable({
 
                 <td>
                   <div className="dueCell">
-                    <span className="dueDesktopText">{formatShortDate(b.dueDate)}</span>
-                    <span className="dueMobileText">{formatMobileDate(b.dueDate)}</span>
-                    <span className="muted small dueDesktopDelta">
-                      (
-                      {b.meta.daysToDue < 0
-                        ? `${Math.abs(b.meta.daysToDue)}d late`
-                        : `${b.meta.daysToDue}d`}
-                      )
+                    <span className="dueDesktopText">
+                      {hasDueDate ? formatShortDate(b.dueDate) : "No due date"}
                     </span>
-                    <span className="muted small dueMobileDelta">
-                      {formatMobileDueDelta(b.meta.daysToDue)}
+                    <span className="dueMobileText">
+                      {hasDueDate ? formatMobileDate(b.dueDate) : "No due date"}
                     </span>
+                    {hasDueDate ? (
+                      <span className="muted small dueDesktopDelta">
+                        (
+                        {b.meta.daysToDue < 0
+                          ? `${Math.abs(b.meta.daysToDue)}d late`
+                          : `${b.meta.daysToDue}d`}
+                        )
+                      </span>
+                    ) : null}
+                    {hasDueDate ? (
+                      <span className="muted small dueMobileDelta">
+                        {formatMobileDueDelta(b.meta.daysToDue)}
+                      </span>
+                    ) : null}
                   </div>
                 </td>
 

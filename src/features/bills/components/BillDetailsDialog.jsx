@@ -51,6 +51,10 @@ function buildPaymentDraft(bill) {
   };
 }
 
+function dueDateLabel(bill) {
+  return bill?.meta?.hasDueDate ? `Due ${formatShortDate(bill.dueDate)}` : "No due date";
+}
+
 export default function BillDetailsDialog({
   open,
   onClose,
@@ -177,7 +181,7 @@ export default function BillDetailsDialog({
                 <span className="billHeaderMetaSep">|</span>
                 <span className="billHeaderMetaItem">{formatCadenceLabel(bill.cadence)}</span>
                 <span className="billHeaderMetaSep">|</span>
-                <span className="billHeaderMetaItem">Due {formatShortDate(bill.dueDate)}</span>
+                <span className="billHeaderMetaItem">{dueDateLabel({ ...bill, meta })}</span>
                 <span className="billHeaderMetaSep">|</span>
                 <span className="billHeaderMetaAmount">{formatMoney(bill.amount)}</span>
               </p>
@@ -226,6 +230,8 @@ export default function BillDetailsDialog({
                     value={
                       meta?.settledInFull
                         ? "Paid in full"
+                        : !meta?.hasDueDate
+                        ? "No due date"
                         : meta?.overdue
                         ? `${Math.abs(meta.daysToDue)} days late`
                         : meta?.daysToDue === 0
@@ -331,46 +337,50 @@ export default function BillDetailsDialog({
                             >
                               {bill.archived ? "Restore bill" : "Archive bill"}
                             </button>
-                            <button
-                              className="btn billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onSnoozeReminder?.("1d");
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              Snooze reminders 1 day
-                            </button>
-                            <button
-                              className="btn billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onSnoozeReminder?.("3d");
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              Snooze reminders 3 days
-                            </button>
-                            <button
-                              className="btn billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onSnoozeReminder?.("cycle");
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              Snooze this cycle
-                            </button>
-                            <button
-                              className="btn billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onSnoozeReminder?.("clear");
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              Clear reminder snooze
-                            </button>
+                            {meta?.hasDueDate ? (
+                              <>
+                                <button
+                                  className="btn billActionsMenuItem"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    onSnoozeReminder?.("1d");
+                                    setActionsMenuOpen(false);
+                                  }}
+                                >
+                                  Snooze reminders 1 day
+                                </button>
+                                <button
+                                  className="btn billActionsMenuItem"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    onSnoozeReminder?.("3d");
+                                    setActionsMenuOpen(false);
+                                  }}
+                                >
+                                  Snooze reminders 3 days
+                                </button>
+                                <button
+                                  className="btn billActionsMenuItem"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    onSnoozeReminder?.("cycle");
+                                    setActionsMenuOpen(false);
+                                  }}
+                                >
+                                  Snooze this cycle
+                                </button>
+                                <button
+                                  className="btn billActionsMenuItem"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    onSnoozeReminder?.("clear");
+                                    setActionsMenuOpen(false);
+                                  }}
+                                >
+                                  Clear reminder snooze
+                                </button>
+                              </>
+                            ) : null}
                             <button
                               className="btn danger billActionsMenuItem"
                               role="menuitem"

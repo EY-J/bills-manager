@@ -13,7 +13,12 @@ import {
   makePayment,
   shiftDueDateByCadence,
 } from "../billsUtils.js";
-import { parseISODate, startOfToday, toISODate } from "../../../lib/date/date.js";
+import {
+  isISODateString,
+  parseISODate,
+  startOfToday,
+  toISODate,
+} from "../../../lib/date/date.js";
 
 export const STORAGE_WARNING_EVENT = "bills:storage-warning";
 export const BILLS_EXTERNAL_SYNC_EVENT = "bills:external-sync";
@@ -131,6 +136,7 @@ function countRolloverCycles(dueDate, cadence, today) {
 }
 
 export function rollBillToCurrentPeriod(bill, today) {
+  if (!isISODateString(bill?.dueDate)) return bill;
   const dueDateObj = parseISODate(bill.dueDate);
   const rolloverCycles = countRolloverCycles(dueDateObj, bill.cadence, today);
   if (rolloverCycles <= 0) return bill;
@@ -207,6 +213,18 @@ function getStatementAmountAt(statementAmounts, index, fallbackAmount = 0) {
 function normalizeReminderDays(reminderDays) {
   const n = Number(reminderDays);
   return BILL_REMINDER_OPTIONS.includes(n) ? n : 3;
+}
+
+function normalizeDueDateForCadence(
+  dueDate,
+  cadence,
+  fallbackDate = toISODate(startOfToday())
+) {
+  if (isISODateString(dueDate)) return dueDate;
+  if (cadence === "one-time" && String(dueDate ?? "").trim().length === 0) {
+    return "";
+  }
+  return fallbackDate;
 }
 
 function normalizeCyclePaidAmount(cyclePaidAmount, amount) {
@@ -382,6 +400,7 @@ export function applyPaymentToCycle(bill, payment) {
 
 function normalizeBillShape(bill) {
   const cadence = normalizeCadence(bill?.cadence);
+  const dueDate = normalizeDueDateForCadence(bill?.dueDate, cadence);
   const statementAmounts =
     cadence === "statement-plan"
       ? normalizeStatementAmounts(bill?.statementAmounts, bill?.amount)
@@ -420,6 +439,7 @@ function normalizeBillShape(bill) {
 
   return {
     ...bill,
+    dueDate,
     amount: effectiveAmount,
     cadence,
     statementAmounts,
@@ -483,7 +503,8 @@ function isCountedPayment(payment) {
 }
 
 export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
-  const safeDueDate = typeof bill?.dueDate === "string" ? bill.dueDate : toISODate(startOfToday());
+  const hasDueDate = isISODateString(bill?.dueDate);
+  const safeDueDate = hasDueDate ? bill.dueDate : toISODate(startOfToday());
   const safeCadence = bill?.cadence || "monthly";
   const isOneTime = safeCadence === "one-time";
   const isStatementPlan = safeCadence === "statement-plan";
@@ -582,7 +603,9 @@ export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
 
   // Rewind old settled cycles, then replay edited payments for consistent due/cycle state.
   const baseDueDate = isOneTime
-    ? safeDueDate
+    ? hasDueDate
+      ? safeDueDate
+      : ""
     : shiftDueDateByCadence(safeDueDate, safeCadence, -previousSettledCycles);
   const basePaidMonths = totalMonths > 0
     ? Math.max(0, currentPaidMonths - previousSettledCycles)
@@ -620,7 +643,9 @@ export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
   });
 
   const nextDueDate = isOneTime
-    ? baseDueDate
+    ? hasDueDate
+      ? baseDueDate
+      : ""
     : shiftDueDateByCadence(baseDueDate, safeCadence, totalSettledCycles);
   const nextPaidMonths = totalMonths > 0
     ? Math.min(totalMonths, basePaidMonths + totalSettledCycles)
@@ -637,13 +662,14 @@ export function recalculateBillCycleFromPayments(bill, nextPaymentsRaw) {
 
 function buildSeedPaidHistoryEntries({ dueDate, amount, cadence, count }) {
   if (count <= 0) return [];
+  const baseDate = isISODateString(dueDate) ? dueDate : toISODate(startOfToday());
   const entries = [];
 
   // Create paid history entries backdated by bill cadence.
   for (let offset = 1; offset <= count; offset += 1) {
     entries.push({
       id: crypto.randomUUID(),
-      date: shiftDueDateByCadence(dueDate, cadence || "monthly", -offset),
+      date: shiftDueDateByCadence(baseDate, cadence || "monthly", -offset),
       amount: Number(amount || 0),
       note: "Paid (history)",
       autoSeedPaidMonths: true,
@@ -904,6 +930,7 @@ export function useBills() {
 
   function addBill(data) {
     const cadence = normalizeCadence(data.cadence);
+    const dueDate = normalizeDueDateForCadence(data.dueDate, cadence);
     const statementAmounts =
       cadence === "statement-plan"
         ? normalizeStatementAmounts(data.statementAmounts, data.amount)
@@ -922,7 +949,7 @@ export function useBills() {
       id: crypto.randomUUID(),
       name: data.name.trim(),
       category: data.category || "Other",
-      dueDate: data.dueDate,
+      dueDate,
       amount: isStatementPlan ? statementAmount : Number(data.amount || 0),
       notes: data.notes || "",
       payments: [],
@@ -939,6 +966,7 @@ export function useBills() {
 
   function updateBill(id, data) {
     const cadence = normalizeCadence(data.cadence);
+    const dueDate = normalizeDueDateForCadence(data.dueDate, cadence);
     setBills((prev) =>
       prev.map((b) =>
         b.id === id
@@ -963,7 +991,7 @@ export function useBills() {
                 ...b,
                 name: data.name.trim(),
                 category: data.category || "Other",
-                dueDate: data.dueDate,
+                dueDate,
                 amount: nextAmount,
                 notes: data.notes || "",
                 cadence,

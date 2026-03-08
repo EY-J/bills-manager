@@ -5,7 +5,7 @@
 //   id: string,
 //   name: string,
 //   category: string,
-//   dueDate: "YYYY-MM-DD",
+//   dueDate: "YYYY-MM-DD" | "", // blank allowed for one-time debts with no set due date
 //   cadence: "monthly" | "bi-weekly" | "weekly" | "one-time" | "statement-plan",
 //   statementAmounts?: number[], // ordered monthly statement amounts for statement-plan
 //   statementIndex?: number, // current statement position

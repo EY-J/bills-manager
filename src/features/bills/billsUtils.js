@@ -1,4 +1,10 @@
-import { addMonthsKeepDay, parseISODate, startOfToday, toISODate } from "../../lib/date/date.js";
+import {
+  addMonthsKeepDay,
+  isISODateString,
+  parseISODate,
+  startOfToday,
+  toISODate,
+} from "../../lib/date/date.js";
 
 export const BILL_CADENCE_OPTIONS = [
   "monthly",
@@ -8,6 +14,7 @@ export const BILL_CADENCE_OPTIONS = [
   "statement-plan",
 ];
 export const BILL_REMINDER_OPTIONS = [1, 3, 7];
+const NO_DUE_DATE_SORT_VALUE = new Date(3000, 0, 1);
 
 function cadenceDays(cadence) {
   if (cadence === "weekly") return 7;
@@ -23,8 +30,11 @@ function shiftIsoByDays(isoDate, days) {
 
 export function computeBillMeta(bill) {
   const today = startOfToday();
-  const due = parseISODate(bill.dueDate);
-  const daysToDue = Math.round((due.getTime() - today.getTime()) / 86400000);
+  const hasDueDate = isISODateString(bill?.dueDate);
+  const due = hasDueDate ? parseISODate(bill.dueDate) : null;
+  const daysToDue = due
+    ? Math.round((due.getTime() - today.getTime()) / 86400000)
+    : null;
   const reminderDays = BILL_REMINDER_OPTIONS.includes(Number(bill?.reminderDays))
     ? Number(bill.reminderDays)
     : 3;
@@ -51,16 +61,21 @@ export function computeBillMeta(bill) {
   const settledInFull =
     (bill?.cadence === "one-time" && cycleAmount > 0 && remainingAmount <= 0) ||
     (isStatementPlan && isStatementPlanLastCycle && cycleAmount > 0 && remainingAmount <= 0);
-  const overdue = !settledInFull && daysToDue < 0;
-  const dueSoon = !settledInFull && daysToDue >= 0 && daysToDue <= reminderDays;
+  const overdue = hasDueDate && !settledInFull && daysToDue < 0;
+  const dueSoon =
+    hasDueDate &&
+    !settledInFull &&
+    daysToDue >= 0 &&
+    daysToDue <= reminderDays;
   const partiallyPaid = cyclePaidAmount > 0 && remainingAmount > 0;
 
   // months pending = ceil of month distance when overdue
-  const monthsPending = overdue ? monthDiffCeil(due, today) : 0;
+  const monthsPending = overdue && due ? monthDiffCeil(due, today) : 0;
 
   const lastPaid = bill.payments?.[0]?.date || null;
 
   return {
+    hasDueDate,
     daysToDue,
     reminderDays,
     overdue,
@@ -72,7 +87,7 @@ export function computeBillMeta(bill) {
     partiallyPaid,
     monthsPending,
     lastPaid,
-    dueDateObj: due,
+    dueDateObj: due || new Date(NO_DUE_DATE_SORT_VALUE),
   };
 }
 

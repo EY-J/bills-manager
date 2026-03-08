@@ -124,6 +124,46 @@ test("one-time payment edit keeps due date fixed while recalculating full-paid s
   assert.equal(recalculated.payments[0].settledCycles, 0);
 });
 
+test("one-time payment edit preserves blank due date when no due date is set", () => {
+  const bill = {
+    id: "bill-one-time-recalc-no-due",
+    name: "Personal debt",
+    category: "Debt",
+    dueDate: "",
+    amount: 300,
+    notes: "",
+    cadence: "one-time",
+    reminderDays: 3,
+    totalMonths: 0,
+    paidMonths: 0,
+    cyclePaidAmount: 300,
+    payments: [
+      {
+        id: "pay-ot-no-due-1",
+        date: "2026-02-10",
+        amount: 300,
+        note: "Paid",
+        settledCycles: 1,
+      },
+    ],
+  };
+
+  const nextPayments = [
+    {
+      id: "pay-ot-no-due-1",
+      date: "2026-02-10",
+      amount: 180,
+      note: "Paid",
+      settledCycles: 1,
+    },
+  ];
+
+  const recalculated = recalculateBillCycleFromPayments(bill, nextPayments);
+  assert.equal(recalculated.dueDate, "");
+  assert.equal(recalculated.cyclePaidAmount, 180);
+  assert.equal(recalculated.payments[0].settledCycles, 0);
+});
+
 test("statement-plan payment edit rewinds statement index and due date", () => {
   const bill = {
     id: "bill-plan-recalc",

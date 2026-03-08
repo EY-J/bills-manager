@@ -2580,6 +2580,27 @@ h1,h2,h3 { margin: 0; }
 .modal.modal-lg {
   max-width: 920px;
 }
+
+.billEditorModal {
+  max-width: min(620px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.billEditorModal .modalHeader,
+.billEditorModal .modalFooter {
+  flex-shrink: 0;
+}
+
+.billEditorModal .modalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
 .confirmBackdrop {
   background: rgba(3, 7, 14, 0.6);
   backdrop-filter: blur(3px);
@@ -4107,6 +4128,80 @@ h1,h2,h3 { margin: 0; }
 .field { display: grid; gap: 6px; }
 .field label { font-size: 13px; color: var(--muted); }
 
+.billEditorModal .grid2 {
+  align-items: start;
+}
+
+.editorCheckRow {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: #93a6ca;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.editorCheckInput {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.editorCheckBox {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(95, 136, 255, 0.34);
+  background:
+    linear-gradient(180deg, rgba(16, 24, 42, 0.96), rgba(10, 17, 31, 0.98)),
+    rgba(15, 19, 32, 0.95);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(8, 12, 22, 0.3);
+  transition:
+    border-color var(--motion-duration) var(--motion-ease),
+    background var(--motion-duration) var(--motion-ease),
+    box-shadow var(--motion-duration) var(--motion-ease);
+}
+
+.editorCheckInput:checked + .editorCheckBox {
+  border-color: rgba(111, 154, 255, 0.82);
+  background:
+    linear-gradient(180deg, rgba(95, 136, 255, 0.96), rgba(61, 104, 218, 0.98)),
+    rgba(76, 118, 228, 0.96);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 0 1px rgba(55, 98, 214, 0.4);
+}
+
+.editorCheckInput:checked + .editorCheckBox::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  width: 5px;
+  height: 8px;
+  border-right: 2px solid rgba(244, 248, 255, 0.96);
+  border-bottom: 2px solid rgba(244, 248, 255, 0.96);
+  transform: rotate(40deg);
+}
+
+.editorCheckInput:focus-visible + .editorCheckBox {
+  box-shadow:
+    0 0 0 2px rgba(11, 15, 26, 0.95),
+    0 0 0 4px rgba(91, 140, 255, 0.46);
+}
+
+.editorCheckInput:disabled + .editorCheckBox,
+.editorCheckInput:disabled ~ span:last-child {
+  opacity: 0.55;
+}
+
 .grid2 { display: grid; gap: 12px; grid-template-columns: 1fr; }
 .grid3 { display: grid; gap: 12px; grid-template-columns: 1fr; }
 @media (min-width: 820px) {
@@ -4241,8 +4336,9 @@ h1,h2,h3 { margin: 0; }
   .billEditorModal {
     width: 100%;
     max-width: 100%;
-    height: 100dvh;
-    max-height: 100dvh;
+    height: calc(100dvh - 12px);
+    max-height: calc(100dvh - 12px);
+    min-height: 0;
     border-radius: 0;
     border-left: 0;
     border-right: 0;
@@ -4276,12 +4372,15 @@ h1,h2,h3 { margin: 0; }
   }
 
   .billEditorModal .modalBody {
+    flex: 1 1 auto;
     overflow-y: auto;
     min-height: 0;
     max-height: none;
+    overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
     gap: 8px;
     padding: 10px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
     scrollbar-width: thin;
     scrollbar-color: rgba(124, 142, 176, 0.35) transparent;
   }

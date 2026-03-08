@@ -94,3 +94,20 @@ test("restore plan merge keep-existing skips conflicting updates", () => {
   );
 });
 
+test("restore plan preserves blank due date for one-time debts", () => {
+  const plan = buildRestorePlan({
+    currentBills: [],
+    incomingBills: [
+      bill("friend", 300, {
+        cadence: "one-time",
+        dueDate: "",
+      }),
+    ],
+    mode: "replace",
+    conflictPolicy: "overwrite",
+  });
+
+  assert.equal(plan.bills.length, 1);
+  assert.equal(plan.bills[0].dueDate, "");
+  assert.equal(plan.bills[0].cadence, "one-time");
+});
