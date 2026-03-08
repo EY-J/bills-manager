@@ -56,6 +56,7 @@ const ACCOUNT_LOCAL_USER_KEY = "bills_account_user_v1";
 const ACCOUNT_E2E_LOCAL_SESSION_KEY = "__bills_e2e_unlock_session_v1";
 const ACCOUNT_PREVIEW_ROTATE_MS = 4200;
 const SESSION_RESTORE_TIMEOUT_MS = 3500;
+const ACCOUNT_BOOTSTRAP_SYNC_TIMEOUT_MS = 4000;
 const ACCOUNT_FEATURE_PREVIEWS = [
   {
     id: "tracker",
@@ -195,6 +196,21 @@ function isErrorNoticeMessage(value) {
 function isLoopbackHost(hostname) {
   const host = String(hostname || "").trim().toLowerCase();
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
+function withClientTimeout(promise, timeoutMs, timeoutMessage) {
+  let timeoutId = 0;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage || "Request timed out."));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+  });
 }
 
 function readLocalE2EAccountSessionUser() {
@@ -377,6 +393,9 @@ export default function App() {
   const accountSkipNextAutoPushRef = useRef(false);
   const accountSyncBusyRef = useRef(false);
   const accountSessionInitRef = useRef(false);
+  const accountBootstrapBillsRef = useRef(bills);
+  const accountBootstrapNotifyEnabledRef = useRef(notifyEnabled);
+  const replaceAllBillsRef = useRef(replaceAllBills);
   const dueSoonRef = useRef(null);
   const billsRef = useRef(null);
   const statsRef = useRef(null);
@@ -467,6 +486,18 @@ export default function App() {
   useEffect(() => {
     accountSyncBusyRef.current = Boolean(accountSyncBusy);
   }, [accountSyncBusy]);
+
+  useEffect(() => {
+    accountBootstrapBillsRef.current = bills;
+  }, [bills]);
+
+  useEffect(() => {
+    accountBootstrapNotifyEnabledRef.current = notifyEnabled;
+  }, [notifyEnabled]);
+
+  useEffect(() => {
+    replaceAllBillsRef.current = replaceAllBills;
+  }, [replaceAllBills]);
 
   const enqueueUndoToast = useCallback((message, onUndo) => {
     setUndoQueue((prev) => [
@@ -771,17 +802,13 @@ export default function App() {
     if (accountSessionInitRef.current) return undefined;
     accountSessionInitRef.current = true;
     let cancelled = false;
-    let sessionTimeoutId = 0;
     (async () => {
       try {
-        const result = await Promise.race([
+        const result = await withClientTimeout(
           getAccountSession(),
-          new Promise((_, reject) => {
-            sessionTimeoutId = window.setTimeout(() => {
-              reject(new Error("Session restore timed out."));
-            }, SESSION_RESTORE_TIMEOUT_MS);
-          }),
-        ]);
+          SESSION_RESTORE_TIMEOUT_MS,
+          "Session restore timed out."
+        );
         if (cancelled) return;
         if (result?.storageMode) {
           setAccountStorageMode(result.storageMode);
@@ -791,7 +818,11 @@ export default function App() {
           markAccountAsKnown();
           setAccountSyncBusy(true);
           try {
-            const remote = await pullAccountBackup();
+            const remote = await withClientTimeout(
+              pullAccountBackup(),
+              ACCOUNT_BOOTSTRAP_SYNC_TIMEOUT_MS,
+              "Account sync bootstrap timed out."
+            );
             if (cancelled) return;
             if (remote?.storageMode) {
               setAccountStorageMode(remote.storageMode);
@@ -800,13 +831,20 @@ export default function App() {
               const validation = validateBackupPayload(remote.payload);
               if (validation.ok) {
                 accountSkipNextAutoPushRef.current = true;
-                replaceAllBills(validation.data.bills);
+                replaceAllBillsRef.current(validation.data.bills);
                 setNotifyEnabled(Boolean(validation.data.notifyEnabled));
                 setLastAccountSyncAt(remote?.updatedAt || new Date().toISOString());
               }
             } else {
-              const payload = createBackupPayload({ bills, notifyEnabled });
-              const pushed = await pushAccountBackup(payload);
+              const payload = createBackupPayload({
+                bills: accountBootstrapBillsRef.current,
+                notifyEnabled: accountBootstrapNotifyEnabledRef.current,
+              });
+              const pushed = await withClientTimeout(
+                pushAccountBackup(payload),
+                ACCOUNT_BOOTSTRAP_SYNC_TIMEOUT_MS,
+                "Account sync bootstrap timed out."
+              );
               if (pushed?.storageMode) {
                 setAccountStorageMode(pushed.storageMode);
               }
@@ -825,9 +863,6 @@ export default function App() {
       } catch {
         // Ignore session restore failures and continue offline-first.
       } finally {
-        if (sessionTimeoutId) {
-          window.clearTimeout(sessionTimeoutId);
-        }
         if (!cancelled) {
           setAccountSessionReady(true);
         }
@@ -837,7 +872,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [bills, notifyEnabled, replaceAllBills, setNotifyEnabled, markAccountAsKnown]);
+  }, [markAccountAsKnown, setNotifyEnabled]);
 
   useEffect(() => {
     if (!accountUser?.id || !accountAutoSync) {
