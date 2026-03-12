@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   formatMoney,
   formatShortDate,
@@ -7,22 +7,28 @@ import {
   startOfToday,
   toISODate,
 } from "../../../lib/date/date.js";
+import { buildCalendarDueOccurrencesByDate } from "../calendarProjection.js";
+import { pickCalendarActivityTone } from "../calendarStatus.js";
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_LABELS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 const CALENDAR_CELL_COUNT = 42;
 const LEGEND_TAP_HIDE_MS = 2200;
 const LEGEND_HOLD_HIDE_MS = 5200;
 const LEGEND_HOLD_THRESHOLD_MS = 420;
-
-const TONE_PRIORITY = {
-  overdue: 6,
-  dueToday: 5,
-  dueSoon: 4,
-  partial: 3,
-  upcoming: 2,
-  paid: 1,
-  archived: 0,
-};
 
 function getMonthStart(date) {
   const d = new Date(date);
@@ -63,48 +69,38 @@ function formatMonthTitle(viewMonthDate) {
   });
 }
 
-function billTone(bill) {
-  if (bill?.archived) return "archived";
-  if (bill?.meta?.settledInFull) return "paid";
-  if (bill?.meta?.overdue) return "overdue";
-  if (bill?.meta?.daysToDue === 0) return "dueToday";
-  if (bill?.meta?.partiallyPaid) return "partial";
-  if (bill?.meta?.dueSoon) return "dueSoon";
-  if (bill?.meta?.lastPaid) {
-    const paid = new Date(bill.meta.lastPaid);
-    const now = new Date();
-    if (
-      paid.getFullYear() === now.getFullYear() &&
-      paid.getMonth() === now.getMonth()
-    ) {
-      return "paid";
+function createMonthDate(year, monthIndex) {
+  const next = new Date(year, monthIndex, 1);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function buildCalendarYearOptions(bills, anchorYear) {
+  const years = [anchorYear, startOfToday().getFullYear()];
+
+  (Array.isArray(bills) ? bills : []).forEach((bill) => {
+    if (isISODateString(bill?.dueDate)) {
+      years.push(parseISODate(bill.dueDate).getFullYear());
     }
-  }
-  return "upcoming";
+
+    const payments = Array.isArray(bill?.payments) ? bill.payments : [];
+    payments.forEach((payment) => {
+      if (isISODateString(payment?.date)) {
+        years.push(parseISODate(payment.date).getFullYear());
+      }
+    });
+  });
+
+  const minYear = Math.min(...years) - 5;
+  const maxYear = Math.max(...years) + 10;
+
+  return Array.from({ length: maxYear - minYear + 1 }, (_, index) => minYear + index);
 }
 
 function paymentToneForBill(bill) {
   if (bill?.archived) return "archived";
   if (bill?.meta?.partiallyPaid) return "partial";
   return "paid";
-}
-
-function pickDayTone(dayBills, dayPayments = []) {
-  if (Array.isArray(dayBills) && dayBills.length > 0) {
-    return dayBills.reduce((best, bill) => {
-      const nextTone = billTone(bill);
-      if (TONE_PRIORITY[nextTone] > TONE_PRIORITY[best]) return nextTone;
-      return best;
-    }, "upcoming");
-  }
-  if (Array.isArray(dayPayments) && dayPayments.length > 0) {
-    return dayPayments.reduce((best, payment) => {
-      const nextTone = payment?.tone || "paid";
-      if (TONE_PRIORITY[nextTone] > TONE_PRIORITY[best]) return nextTone;
-      return best;
-    }, "paid");
-  }
-  return "upcoming";
 }
 
 function isVisibleCalendarPayment(payment) {
@@ -119,55 +115,6 @@ function paymentMetaLabel(entry) {
   if (entry.note) return `${amountLabel} | ${entry.note}`;
   if (entry.tone === "partial") return `${amountLabel} | Partial payment`;
   return `${amountLabel} | Payment recorded`;
-}
-
-function statusLabelForBill(bill) {
-  if (bill?.archived) return "Archived";
-  if (bill?.meta?.settledInFull) return "Paid in full";
-  if (bill?.meta?.overdue) {
-    if (bill?.meta?.partiallyPaid) {
-      return `Overdue - ${formatMoney(bill.meta.remainingAmount)} left`;
-    }
-    return "Overdue";
-  }
-  if (bill?.meta?.daysToDue === 0) {
-    if (bill?.meta?.partiallyPaid) {
-      return `Due today - ${formatMoney(bill.meta.remainingAmount)} left`;
-    }
-    return "Due today";
-  }
-  if (bill?.meta?.partiallyPaid) {
-    return `Partial - ${formatMoney(bill.meta.remainingAmount)} left`;
-  }
-  if (bill?.meta?.dueSoon) return `Due in ${bill.meta.daysToDue}d`;
-  if (bill?.meta?.lastPaid) {
-    const paid = new Date(bill.meta.lastPaid);
-    const now = new Date();
-    if (
-      paid.getFullYear() === now.getFullYear() &&
-      paid.getMonth() === now.getMonth()
-    ) {
-      return "Paid";
-    }
-  }
-  return "Upcoming";
-}
-
-function normalizeBillsByDate(bills) {
-  const out = new Map();
-  (Array.isArray(bills) ? bills : []).forEach((bill) => {
-    if (!bill || !isISODateString(bill.dueDate)) return;
-    const existing = out.get(bill.dueDate) || [];
-    existing.push(bill);
-    out.set(bill.dueDate, existing);
-  });
-
-  out.forEach((entries, key) => {
-    entries.sort((a, b) => Number(a.amount || 0) - Number(b.amount || 0));
-    out.set(key, entries);
-  });
-
-  return out;
 }
 
 function buildPaymentEntriesByDate(bills) {
@@ -199,11 +146,11 @@ function buildPaymentEntriesByDate(bills) {
   return out;
 }
 
-function buildMonthActivityDates(viewMonthKey, dueBills, paymentsByDate) {
+function buildMonthActivityDates(viewMonthKey, dueEntriesByDate, paymentsByDate) {
   const dates = new Set();
-  (Array.isArray(dueBills) ? dueBills : []).forEach((bill) => {
-    if (monthKeyFromIso(bill?.dueDate) === viewMonthKey) {
-      dates.add(bill.dueDate);
+  dueEntriesByDate.forEach((_, iso) => {
+    if (monthKeyFromIso(iso) === viewMonthKey) {
+      dates.add(iso);
     }
   });
   paymentsByDate.forEach((_, iso) => {
@@ -267,23 +214,37 @@ export default function BillsCalendarCard({
     toISODate(startOfToday())
   );
   const [legendOpen, setLegendOpen] = useState(false);
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [pickerMonth, setPickerMonth] = useState(() => startOfToday().getMonth());
+  const [pickerYear, setPickerYear] = useState(() => startOfToday().getFullYear());
   const legendWrapRef = useRef(null);
+  const monthPickerRef = useRef(null);
   const legendPressStartRef = useRef(0);
   const legendPressDurationRef = useRef(0);
   const legendAutoHideTimerRef = useRef(null);
+  const monthPickerId = useId();
 
   const dueBills = useMemo(
     () => (Array.isArray(bills) ? bills.filter((bill) => !bill.archived) : []),
     [bills]
   );
-  const billsByDate = useMemo(() => normalizeBillsByDate(dueBills), [dueBills]);
-  const paymentsByDate = useMemo(() => buildPaymentEntriesByDate(dueBills), [dueBills]);
+  const calendarYearOptions = useMemo(
+    () => buildCalendarYearOptions(dueBills, viewMonthDate.getFullYear()),
+    [dueBills, viewMonthDate]
+  );
   const cells = useMemo(() => buildCells(viewMonthDate), [viewMonthDate]);
+  const visibleRangeStart = cells[0]?.iso || toISODate(viewMonthDate);
+  const visibleRangeEnd = cells[cells.length - 1]?.iso || toISODate(viewMonthDate);
+  const billsByDate = useMemo(
+    () => buildCalendarDueOccurrencesByDate(dueBills, visibleRangeStart, visibleRangeEnd),
+    [dueBills, visibleRangeEnd, visibleRangeStart]
+  );
+  const paymentsByDate = useMemo(() => buildPaymentEntriesByDate(dueBills), [dueBills]);
 
   const viewMonthKey = monthKeyFromDate(viewMonthDate);
   const monthActivityDates = useMemo(
-    () => buildMonthActivityDates(viewMonthKey, dueBills, paymentsByDate),
-    [dueBills, paymentsByDate, viewMonthKey]
+    () => buildMonthActivityDates(viewMonthKey, billsByDate, paymentsByDate),
+    [billsByDate, paymentsByDate, viewMonthKey]
   );
 
   const selectedDate = useMemo(() => {
@@ -304,6 +265,11 @@ export default function BillsCalendarCard({
   const rootClassName = `${contained ? "" : "card "}calendarCard${
     compact ? " isCompact" : ""
   }${contained ? " isContained" : ""}`.trim();
+
+  function syncMonthPickerToViewMonth() {
+    setPickerMonth(viewMonthDate.getMonth());
+    setPickerYear(viewMonthDate.getFullYear());
+  }
 
   function clearLegendAutoHideTimer() {
     if (!legendAutoHideTimerRef.current) return;
@@ -331,6 +297,31 @@ export default function BillsCalendarCard({
       }
       return true;
     });
+  }
+
+  function toggleMonthPicker() {
+    if (!monthPickerOpen) {
+      syncMonthPickerToViewMonth();
+    }
+    setMonthPickerOpen((open) => !open);
+  }
+
+  function applyMonthPicker() {
+    const safeMonth =
+      Number.isFinite(Number(pickerMonth)) && Number(pickerMonth) >= 0 && Number(pickerMonth) <= 11
+        ? Number(pickerMonth)
+        : viewMonthDate.getMonth();
+    const safeYear =
+      Number.isFinite(Number(pickerYear)) && Number(pickerYear) >= 1
+        ? Number(pickerYear)
+        : viewMonthDate.getFullYear();
+    setViewMonthDate(createMonthDate(safeYear, safeMonth));
+    setMonthPickerOpen(false);
+  }
+
+  function goToCurrentMonth() {
+    setViewMonthDate(getMonthStart(startOfToday()));
+    setMonthPickerOpen(false);
   }
 
   useEffect(() => {
@@ -374,6 +365,38 @@ export default function BillsCalendarCard({
     },
     []
   );
+
+  useEffect(() => {
+    if (!monthPickerOpen) return undefined;
+
+    function onPointerDown(event) {
+      const root = monthPickerRef.current;
+      if (!root) return;
+      if (root.contains(event.target)) return;
+      setMonthPickerOpen(false);
+    }
+
+    function onKeyDown(event) {
+      if (event.key !== "Escape") return;
+      setMonthPickerOpen(false);
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown, { passive: true });
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [monthPickerOpen]);
+
+  useEffect(() => {
+    if (monthPickerOpen) {
+      syncMonthPickerToViewMonth();
+    }
+  }, [monthPickerOpen, viewMonthDate]);
 
   function renderCalendarInfoTip() {
     return (
@@ -420,7 +443,7 @@ export default function BillsCalendarCard({
           className="btn small"
           aria-label="Go to current month"
           data-testid="calendar-current-month"
-          onClick={() => setViewMonthDate(getMonthStart(startOfToday()))}
+          onClick={goToCurrentMonth}
         >
           <svg
             className="calendarActionIcon"
@@ -458,6 +481,87 @@ export default function BillsCalendarCard({
           </svg>
           <span className="calendarActionLabel">Next</span>
         </button>
+      </div>
+    );
+  }
+
+  function renderMonthPicker() {
+    return (
+      <div ref={monthPickerRef} className="calendarMonthPickerWrap">
+        <button
+          type="button"
+          className={`calendarMonthTitle calendarMonthTrigger ${monthPickerOpen ? "isOpen" : ""}`}
+          aria-live="polite"
+          aria-haspopup="dialog"
+          aria-expanded={monthPickerOpen}
+          aria-controls={monthPickerId}
+          data-testid="calendar-month-title"
+          onClick={toggleMonthPicker}
+        >
+          <span>{formatMonthTitle(viewMonthDate)}</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M4.5 6.5L8 10l3.5-3.5" />
+          </svg>
+        </button>
+        <div
+          id={monthPickerId}
+          className={`calendarMonthPicker ${monthPickerOpen ? "isOpen" : ""}`}
+          role="dialog"
+          aria-label="Choose month and year"
+          data-testid="calendar-month-picker"
+        >
+          <div className="calendarMonthPickerHead">
+            <span className="calendarMonthPickerEyebrow">Jump to</span>
+            <p>Pick a month and year</p>
+          </div>
+          <div className="calendarMonthPickerFields">
+            <label className="calendarMonthPickerField calendarMonthPickerFieldMonth">
+              <span>Month</span>
+              <select
+                className="select calendarMonthPickerSelect"
+                aria-label="Month"
+                value={String(pickerMonth)}
+                data-testid="calendar-month-select"
+                onChange={(event) => setPickerMonth(Number(event.target.value))}
+              >
+                {MONTH_LABELS.map((label, index) => (
+                  <option key={label} value={String(index)}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="calendarMonthPickerField calendarMonthPickerFieldYear">
+              <span>Year</span>
+              <select
+                className="select calendarMonthPickerSelect"
+                aria-label="Year"
+                value={String(pickerYear)}
+                data-testid="calendar-year-select"
+                onChange={(event) => setPickerYear(Number(event.target.value))}
+              >
+                {calendarYearOptions.map((year) => (
+                  <option key={year} value={String(year)}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="calendarMonthPickerActions">
+            <button type="button" className="btn small" onClick={goToCurrentMonth}>
+              Today
+            </button>
+            <button
+              type="button"
+              className="btn small primary"
+              data-testid="calendar-month-apply"
+              onClick={applyMonthPicker}
+            >
+              Apply
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -518,16 +622,12 @@ export default function BillsCalendarCard({
       {compact ? (
         <div className="calendarCompactBar">
           <div className="calendarCompactTitle">
-            <div className="calendarMonthTitle" aria-live="polite" data-testid="calendar-month-title">
-              {formatMonthTitle(viewMonthDate)}
-            </div>
+            {renderMonthPicker()}
             {!showIntro ? renderCalendarInfoTip() : null}
           </div>
         </div>
       ) : (
-        <div className="calendarMonthTitle" aria-live="polite" data-testid="calendar-month-title">
-          {formatMonthTitle(viewMonthDate)}
-        </div>
+        renderMonthPicker()
       )}
 
       {!compact ? (
@@ -554,7 +654,7 @@ export default function BillsCalendarCard({
           {cells.map((cell) => {
             const dayBills = billsByDate.get(cell.iso) || [];
             const dayPayments = paymentsByDate.get(cell.iso) || [];
-            const tone = pickDayTone(dayBills, dayPayments);
+            const tone = pickCalendarActivityTone(dayBills, dayPayments);
             const isSelected = cell.iso === selectedDate;
             const dueCount = dayBills.length;
             const paymentCount = dayPayments.length;
@@ -603,19 +703,18 @@ export default function BillsCalendarCard({
             <p className="muted small">Due bills</p>
             <div className="calendarDueList">
               {selectedBills.map((bill) => {
-                const tone = billTone(bill);
+                const tone = bill?.tone || "upcoming";
                 return (
                   <button
                     key={bill.id}
                     type="button"
                     className={`calendarDueItem calendarTone-${tone}`}
-                    data-testid={`calendar-due-item-${bill.id}`}
-                    onClick={() => onOpenBill?.(bill.id)}
+                    data-testid={`calendar-due-item-${bill.billId}`}
+                    onClick={() => onOpenBill?.(bill.billId)}
                   >
                     <span className="calendarDueName">{bill.name}</span>
                     <span className="calendarDueMeta">
-                      {formatMoney(bill.meta?.remainingAmount ?? bill.amount)} |{" "}
-                      {statusLabelForBill(bill)}
+                      {formatMoney(bill.displayAmount ?? bill.amount)} | {bill.statusLabel}
                     </span>
                   </button>
                 );

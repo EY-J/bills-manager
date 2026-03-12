@@ -770,7 +770,6 @@ export default function App() {
       paidThisMonth,
     };
   }, [activeEnriched]);
-
   useDueSoonNotifications({
     enabled: notifyEnabled,
     dueSoonBills: dueSoonForNotifications,
