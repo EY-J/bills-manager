@@ -271,6 +271,19 @@ export default function BillsCalendarCard({
     setPickerYear(viewMonthDate.getFullYear());
   }
 
+  function syncMonthPickerToDate(date) {
+    setPickerMonth(date.getMonth());
+    setPickerYear(date.getFullYear());
+  }
+
+  function setCalendarMonth(date) {
+    const nextDate = getMonthStart(date);
+    setViewMonthDate(nextDate);
+    if (monthPickerOpen) {
+      syncMonthPickerToDate(nextDate);
+    }
+  }
+
   function clearLegendAutoHideTimer() {
     if (!legendAutoHideTimerRef.current) return;
     window.clearTimeout(legendAutoHideTimerRef.current);
@@ -315,12 +328,12 @@ export default function BillsCalendarCard({
       Number.isFinite(Number(pickerYear)) && Number(pickerYear) >= 1
         ? Number(pickerYear)
         : viewMonthDate.getFullYear();
-    setViewMonthDate(createMonthDate(safeYear, safeMonth));
+    setCalendarMonth(createMonthDate(safeYear, safeMonth));
     setMonthPickerOpen(false);
   }
 
   function goToCurrentMonth() {
-    setViewMonthDate(getMonthStart(startOfToday()));
+    setCalendarMonth(startOfToday());
     setMonthPickerOpen(false);
   }
 
@@ -392,12 +405,6 @@ export default function BillsCalendarCard({
     };
   }, [monthPickerOpen]);
 
-  useEffect(() => {
-    if (monthPickerOpen) {
-      syncMonthPickerToViewMonth();
-    }
-  }, [monthPickerOpen, viewMonthDate]);
-
   function renderCalendarInfoTip() {
     return (
       <button
@@ -422,7 +429,7 @@ export default function BillsCalendarCard({
           className="btn small"
           aria-label="Previous month"
           data-testid="calendar-prev-month"
-          onClick={() => setViewMonthDate((prev) => addMonths(prev, -1))}
+          onClick={() => setCalendarMonth(addMonths(viewMonthDate, -1))}
         >
           <svg
             className="calendarActionIcon"
@@ -465,7 +472,7 @@ export default function BillsCalendarCard({
           className="btn small"
           aria-label="Next month"
           data-testid="calendar-next-month"
-          onClick={() => setViewMonthDate((prev) => addMonths(prev, 1))}
+          onClick={() => setCalendarMonth(addMonths(viewMonthDate, 1))}
         >
           <svg
             className="calendarActionIcon"
