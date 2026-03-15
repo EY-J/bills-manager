@@ -12,7 +12,14 @@ import MobileBottomNav from "../components/layout/MobileBottomNav.jsx";
 import DueSoonBanner from "../features/bills/components/DueSoonBanner.jsx";
 import BillsTable from "../features/bills/components/BillsTable.jsx";
 import EmptyState from "../components/common/EmptyState.jsx";
-import { formatMoney, parseISODate, startOfToday, toISODate } from "../lib/date/date.js";
+import {
+  formatShortDate,
+  formatMoney,
+  isISODateString,
+  parseISODate,
+  startOfToday,
+  toISODate,
+} from "../lib/date/date.js";
 import {
   buildRestorePlan,
   createBackupPayload,
@@ -295,8 +302,10 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all"); // all | dueSoon | overdue | thisMonth | archived
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileFilterMoreOpen, setMobileFilterMoreOpen] = useState(false);
 
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorInitialDueDate, setEditorInitialDueDate] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -384,7 +393,11 @@ export default function App() {
   });
   const [riskRestorePoint, setRiskRestorePoint] = useState(null);
   const [mobileTab, setMobileTab] = useState("bills");
+  const [mobileQuickActionsOpen, setMobileQuickActionsOpen] = useState(false);
+  const [mobileQuickActionMode, setMobileQuickActionMode] = useState("main");
+  const [lastCalendarSelectedDate, setLastCalendarSelectedDate] = useState("");
   const [actionLoadingMap, setActionLoadingMap] = useState({});
+  const [detailsInitialTab, setDetailsInitialTab] = useState("overview");
   const actionLoadingRef = useRef(new Set());
   const storageWarningCooldownRef = useRef(0);
   const externalSyncCooldownRef = useRef(0);
@@ -399,6 +412,7 @@ export default function App() {
   const dueSoonRef = useRef(null);
   const billsRef = useRef(null);
   const statsRef = useRef(null);
+  const mobileFilterMoreRef = useRef(null);
   const hasBlockingModal =
     settingsOpen || accountOpen || calendarOpen || editorOpen || detailsOpen || clearConfirmOpen;
   const currentUndoToast = undoQueue[0] || null;
@@ -592,6 +606,29 @@ export default function App() {
     const t = setTimeout(() => setNoticeToast(null), 2200);
     return () => clearTimeout(t);
   }, [noticeToast]);
+
+  useEffect(() => {
+    if (!mobileFilterMoreOpen) return;
+    function handleOutside(event) {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest(".quickFilterMoreWrap")) return;
+      setMobileFilterMoreOpen(false);
+    }
+    function handleKeyDown(event) {
+      if (event.key !== "Escape") return;
+      setMobileFilterMoreOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mobileFilterMoreOpen]);
+
+  useEffect(() => {
+    setMobileFilterMoreOpen(false);
+  }, [filter, mobileSearchOpen]);
 
   useEffect(() => {
     function onUpdateReady() {
@@ -1488,6 +1525,45 @@ export default function App() {
     [bills, editingId]
   );
 
+  function openNewBillEditor(initialDueDate = "") {
+    setEditingId(null);
+    setEditorInitialDueDate(isISODateString(initialDueDate) ? initialDueDate : "");
+    setEditorOpen(true);
+  }
+
+  function closeMobileQuickActions() {
+    setMobileQuickActionsOpen(false);
+    setMobileQuickActionMode("main");
+  }
+
+  function openMobileQuickActions() {
+    setMobileQuickActionMode("main");
+    setMobileQuickActionsOpen(true);
+  }
+
+  function openBillDetails(id, initialTab = "overview") {
+    setDetailsInitialTab(initialTab === "payments" ? "payments" : "overview");
+    setSelectedId(id);
+    setDetailsOpen(true);
+  }
+
+  const mobilePaymentCandidates = useMemo(
+    () => activeEnriched.slice(0, 6),
+    [activeEnriched]
+  );
+
+  useEffect(() => {
+    if (!mobileQuickActionsOpen) return undefined;
+    function onKeyDown(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeMobileQuickActions();
+    }
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [mobileQuickActionsOpen]);
+
   if (showSplash) {
     return (
       <div
@@ -1810,8 +1886,7 @@ export default function App() {
             }
             return;
           }
-          setEditingId(null);
-          setEditorOpen(true);
+          openNewBillEditor();
         }}
       />
 
@@ -1929,8 +2004,22 @@ export default function App() {
               if (mobileTab === "calendar") {
                 setMobileTab("bills");
               }
-              setSelectedId(id);
-              setDetailsOpen(true);
+              openBillDetails(id, "overview");
+            }}
+            onAddBillAtDate={(isoDate) => {
+              setCalendarOpen(false);
+              if (mobileTab === "calendar") {
+                setMobileTab("bills");
+              }
+              if (isISODateString(isoDate)) {
+                setLastCalendarSelectedDate(isoDate);
+              }
+              openNewBillEditor(isoDate);
+            }}
+            onSelectDate={(isoDate) => {
+              if (isISODateString(isoDate)) {
+                setLastCalendarSelectedDate(isoDate);
+              }
             }}
           />
         </Suspense>
@@ -2076,8 +2165,7 @@ export default function App() {
               <DueSoonBanner
                 dueSoonBills={dueSoonList}
                 onOpen={(id) => {
-                  setSelectedId(id);
-                  setDetailsOpen(true);
+                  openBillDetails(id, "overview");
                 }}
               />
             </div>
@@ -2106,32 +2194,33 @@ export default function App() {
               <div
                 className={`billsFiltersRow ${mobileSearchOpen ? "searchOpen" : ""}`}
               >
-                <button
-                  type="button"
-                  className="searchToggleBtn"
-                  aria-label="Toggle search"
-                  aria-expanded={mobileSearchOpen}
-                  onClick={() => setMobileSearchOpen((open) => !open)}
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+                <div className={`mobileSearchMorph ${mobileSearchOpen ? "open" : ""}`}>
+                  <input
+                    className="input billsSearchInput"
+                    placeholder="Search bills or categories..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="searchToggleBtn"
+                    aria-label="Toggle search"
+                    aria-expanded={mobileSearchOpen}
+                    onClick={() => setMobileSearchOpen((open) => !open)}
                   >
-                    <circle cx="11" cy="11" r="7" />
-                    <path d="m20 20-3.5-3.5" />
-                  </svg>
-                </button>
-
-                <input
-                  className="input billsSearchInput"
-                  placeholder="Search bills or categories..."
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.5-3.5" />
+                    </svg>
+                  </button>
+                </div>
 
                 <select
                   className="select billsFilterSelect"
@@ -2147,7 +2236,6 @@ export default function App() {
 
                 <div
                   className="quickFilterChips"
-                  role="tablist"
                   aria-label="Quick filters"
                 >
                   <button
@@ -2171,20 +2259,69 @@ export default function App() {
                   >
                     Overdue
                   </button>
-                  <button
-                    type="button"
-                    className={`quickFilterChip ${filter === "thisMonth" ? "active" : ""}`}
-                    onClick={() => setFilter("thisMonth")}
-                  >
-                    This month
-                  </button>
-                  <button
-                    type="button"
-                    className={`quickFilterChip ${filter === "archived" ? "active" : ""}`}
-                    onClick={() => setFilter("archived")}
-                  >
-                    Archived
-                  </button>
+                  <div className="quickFilterMoreWrap" ref={mobileFilterMoreRef}>
+                    <button
+                      type="button"
+                      className={`quickFilterChip quickFilterMoreChip ${
+                        filter === "thisMonth" || filter === "archived" ? "active" : ""
+                      } ${mobileFilterMoreOpen ? "menuOpen" : ""}`}
+                      onClick={() => setMobileFilterMoreOpen((open) => !open)}
+                      aria-label={
+                        filter === "thisMonth"
+                          ? "More filters, This month selected"
+                          : filter === "archived"
+                            ? "More filters, Archived selected"
+                            : "More filters"
+                      }
+                      aria-expanded={mobileFilterMoreOpen}
+                      aria-haspopup="menu"
+                    >
+                      <svg
+                        className="quickFilterMoreIcon"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        aria-hidden="true"
+                        focusable="false"
+                      >
+                        <circle cx="3.5" cy="8" r="1.25" />
+                        <circle cx="8" cy="8" r="1.25" />
+                        <circle cx="12.5" cy="8" r="1.25" />
+                      </svg>
+                    </button>
+
+                    {mobileFilterMoreOpen ? (
+                      <>
+                        <button
+                          type="button"
+                          className="quickFilterMoreBackdrop"
+                          aria-label="Close more filters"
+                          onClick={() => setMobileFilterMoreOpen(false)}
+                        />
+                        <div className="quickFilterMoreMenu" role="menu" aria-label="More filters">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`quickFilterMoreItem ${
+                              filter === "thisMonth" ? "active" : ""
+                            }`}
+                            onClick={() => setFilter("thisMonth")}
+                          >
+                            This month
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`quickFilterMoreItem ${
+                              filter === "archived" ? "active" : ""
+                            }`}
+                            onClick={() => setFilter("archived")}
+                          >
+                            Archived
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -2192,8 +2329,7 @@ export default function App() {
                 className="btn primary"
                 data-testid="add-bill-button"
                 onClick={() => {
-                  setEditingId(null);
-                  setEditorOpen(true);
+                  openNewBillEditor();
                 }}
               >
                 + Add bill
@@ -2235,11 +2371,11 @@ export default function App() {
                 Boolean(actionLoadingMap[`bill:${id}:markPaid`])
               }
               onRowClick={(id) => {
-                setSelectedId(id);
-                setDetailsOpen(true);
+                openBillDetails(id, "overview");
               }}
               onEdit={(id) => {
                 setEditingId(id);
+                setEditorInitialDueDate("");
                 setEditorOpen(true);
               }}
               onDelete={handleDeleteWithUndo}
@@ -2255,18 +2391,138 @@ export default function App() {
       </div>
 
       {!hasBlockingModal && !accountBlocked ? (
-        <MobileBottomNav
-          active={mobileTab}
-          accountSignedIn={accountSignedIn}
-          onSelect={(tab) => {
-            setMobileTab(tab);
-            if (tab === "bills") scrollToRef(billsRef);
-            if (tab === "due") scrollToRef(dueSoonRef);
-            if (tab === "calendar") setCalendarOpen(true);
-            if (tab === "stats") scrollToRef(statsRef);
-            if (tab === "account") openAccountDialog("signin");
-          }}
-        />
+        <>
+          {mobileQuickActionsOpen ? (
+            <div className="mobileQuickSheet" onMouseDown={closeMobileQuickActions}>
+              <div className="mobileQuickSheetCard" onMouseDown={(event) => event.stopPropagation()}>
+                {mobileQuickActionMode === "main" ? (
+                  <>
+                    <div className="mobileQuickSheetHead">
+                      <strong>Quick actions</strong>
+                      <button
+                        type="button"
+                        className="iconBtn modalCloseBtn"
+                        aria-label="Close quick actions"
+                        onClick={closeMobileQuickActions}
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                          <path d="M4 4l8 8M12 4l-8 8" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="mobileQuickSheetList">
+                      <button
+                        type="button"
+                        className="mobileQuickSheetAction isPrimary"
+                        onClick={() => {
+                          closeMobileQuickActions();
+                          openNewBillEditor();
+                        }}
+                      >
+                        <strong>Add bill</strong>
+                        <span>Create a new bill entry</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="mobileQuickSheetAction"
+                        disabled={mobilePaymentCandidates.length === 0}
+                        onClick={() => setMobileQuickActionMode("payment")}
+                      >
+                        <strong>Add payment</strong>
+                        <span>
+                          {mobilePaymentCandidates.length === 0
+                            ? "No active bills yet"
+                            : "Choose a bill to open Payments tab"}
+                        </span>
+                      </button>
+                      {isISODateString(lastCalendarSelectedDate) ? (
+                        <button
+                          type="button"
+                          className="mobileQuickSheetAction"
+                          onClick={() => {
+                            closeMobileQuickActions();
+                            openNewBillEditor(lastCalendarSelectedDate);
+                          }}
+                        >
+                          <strong>Add bill on {formatShortDate(lastCalendarSelectedDate)}</strong>
+                          <span>Uses your last selected calendar date</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mobileQuickSheetHead">
+                      <button
+                        type="button"
+                        className="btn small"
+                        onClick={() => setMobileQuickActionMode("main")}
+                      >
+                        Back
+                      </button>
+                      <strong>Pick bill for payment</strong>
+                      <button
+                        type="button"
+                        className="iconBtn modalCloseBtn"
+                        aria-label="Close quick actions"
+                        onClick={closeMobileQuickActions}
+                      >
+                        <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                          <path d="M4 4l8 8M12 4l-8 8" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="mobileQuickSheetList">
+                      {mobilePaymentCandidates.length === 0 ? (
+                        <p className="muted small mobileQuickSheetEmpty">No active bills yet.</p>
+                      ) : (
+                        mobilePaymentCandidates.map((bill) => (
+                          <button
+                            key={bill.id}
+                            type="button"
+                            className="mobileQuickSheetAction"
+                            onClick={() => {
+                              closeMobileQuickActions();
+                              openBillDetails(bill.id, "payments");
+                            }}
+                          >
+                            <strong>{bill.name}</strong>
+                            <span>
+                              {bill.meta?.hasDueDate
+                                ? `Due ${formatShortDate(bill.dueDate)}`
+                                : "No due date"}
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="mobileQuickFab"
+            aria-label="Open quick actions"
+            data-testid="mobile-quick-fab"
+            onClick={openMobileQuickActions}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M8 3.2v9.6M3.2 8h9.6" />
+            </svg>
+          </button>
+          <MobileBottomNav
+            active={mobileTab}
+            accountSignedIn={accountSignedIn}
+            onSelect={(tab) => {
+              setMobileTab(tab);
+              if (tab === "bills") scrollToRef(billsRef);
+              if (tab === "calendar") setCalendarOpen(true);
+              if (tab === "account") openAccountDialog("signin");
+            }}
+          />
+        </>
       ) : null}
 
       {editorOpen && !accountBlocked ? (
@@ -2274,6 +2530,7 @@ export default function App() {
           <BillEditorDialog
             onClose={() => setEditorOpen(false)}
             bill={editingBill}
+            initialDueDate={editorInitialDueDate}
             onSave={(data) => {
               if (editingBill) {
                 runWithUndo("Bill updated", () => {
@@ -2294,12 +2551,17 @@ export default function App() {
         <Suspense fallback={null}>
           <BillDetailsDialog
             open={detailsOpen}
-            onClose={() => setDetailsOpen(false)}
+            onClose={() => {
+              setDetailsOpen(false);
+              setDetailsInitialTab("overview");
+            }}
             bill={selectedBill}
+            initialTab={detailsInitialTab}
             onEdit={() => {
               if (!selectedBill) return;
               setDetailsOpen(false);
               setEditingId(selectedBill.id);
+              setEditorInitialDueDate("");
               setEditorOpen(true);
             }}
             onMarkPaid={() => {

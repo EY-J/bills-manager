@@ -511,7 +511,7 @@ export default function AccountDialog({
             <p className="muted">{headerSubtitle}</p>
           </div>
           <button
-            className="iconBtn"
+            className="iconBtn modalCloseBtn"
             onClick={onClose}
             aria-label="Close account"
             data-testid="account-close-button"
@@ -1163,7 +1163,7 @@ export default function AccountDialog({
                 <p className="muted">Enter your current password, then set a new one.</p>
               </div>
               <button
-                className="iconBtn"
+                className="iconBtn modalCloseBtn"
                 onClick={closePasswordChangeModal}
                 aria-label="Close password change"
                 data-testid="account-change-password-close"

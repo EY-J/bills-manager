@@ -25,10 +25,26 @@ const MONTH_LABELS = [
   "November",
   "December",
 ];
-const CALENDAR_CELL_COUNT = 42;
-const LEGEND_TAP_HIDE_MS = 2200;
-const LEGEND_HOLD_HIDE_MS = 5200;
-const LEGEND_HOLD_THRESHOLD_MS = 420;
+const EMPTY_DATE_MAP = new Map();
+const EMPTY_ITEMS = [];
+const MOBILE_OVERVIEW_QUERY = "(max-width: 760px)";
+const SWIPE_DISTANCE_THRESHOLD_PX = 42;
+const SWIPE_DIRECTION_LOCK_RATIO = 1.2;
+const SWIPE_MAX_DURATION_MS = 650;
+
+function shouldCollapseOverviewByDefault() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia(MOBILE_OVERVIEW_QUERY).matches;
+}
+
+function isMobileSwipeViewport() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+  return window.matchMedia(MOBILE_OVERVIEW_QUERY).matches;
+}
 
 function getMonthStart(date) {
   const d = new Date(date);
@@ -60,6 +76,18 @@ function getGridStart(viewMonthDate) {
   gridStart.setDate(firstOfMonth.getDate() - firstOfMonth.getDay());
   gridStart.setHours(0, 0, 0, 0);
   return gridStart;
+}
+
+function getCalendarCellCount(viewMonthDate) {
+  const firstOfMonth = getMonthStart(viewMonthDate);
+  const daysInMonth = new Date(
+    firstOfMonth.getFullYear(),
+    firstOfMonth.getMonth() + 1,
+    0
+  ).getDate();
+  const leadingDays = firstOfMonth.getDay();
+  const weeks = Math.ceil((leadingDays + daysInMonth) / 7);
+  return weeks * 7;
 }
 
 function formatMonthTitle(viewMonthDate) {
@@ -186,7 +214,8 @@ function activityLabel(dueCount, paymentCount) {
 
 function buildCells(viewMonthDate) {
   const start = getGridStart(viewMonthDate);
-  return Array.from({ length: CALENDAR_CELL_COUNT }, (_, idx) => {
+  const cellCount = getCalendarCellCount(viewMonthDate);
+  return Array.from({ length: cellCount }, (_, idx) => {
     const d = new Date(start);
     d.setDate(start.getDate() + idx);
     d.setHours(0, 0, 0, 0);
@@ -203,6 +232,8 @@ function buildCells(viewMonthDate) {
 export default function BillsCalendarCard({
   bills,
   onOpenBill,
+  onAddBillAtDate,
+  onSelectDate,
   compact = false,
   contained = false,
   showIntro = true,
@@ -213,16 +244,27 @@ export default function BillsCalendarCard({
   const [selectedDateRaw, setSelectedDateRaw] = useState(() =>
     toISODate(startOfToday())
   );
-  const [legendOpen, setLegendOpen] = useState(false);
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [inlineDropdownOpen, setInlineDropdownOpen] = useState(null);
+  const [isMobileOverviewCollapsed, setIsMobileOverviewCollapsed] = useState(() =>
+    shouldCollapseOverviewByDefault()
+  );
+  const [mobileDayActionsVisible, setMobileDayActionsVisible] = useState(false);
+  const [mobileDayInfoOpen, setMobileDayInfoOpen] = useState(false);
   const [pickerMonth, setPickerMonth] = useState(() => startOfToday().getMonth());
   const [pickerYear, setPickerYear] = useState(() => startOfToday().getFullYear());
-  const legendWrapRef = useRef(null);
   const monthPickerRef = useRef(null);
-  const legendPressStartRef = useRef(0);
-  const legendPressDurationRef = useRef(0);
-  const legendAutoHideTimerRef = useRef(null);
+  const inlineHeaderRef = useRef(null);
   const monthPickerId = useId();
+  const swipeStateRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    startedAt: 0,
+  });
+  const suppressNextDayTapRef = useRef(false);
 
   const dueBills = useMemo(
     () => (Array.isArray(bills) ? bills.filter((bill) => !bill.archived) : []),
@@ -243,8 +285,13 @@ export default function BillsCalendarCard({
 
   const viewMonthKey = monthKeyFromDate(viewMonthDate);
   const monthActivityDates = useMemo(
-    () => buildMonthActivityDates(viewMonthKey, billsByDate, paymentsByDate),
-    [billsByDate, paymentsByDate, viewMonthKey]
+    () =>
+      buildMonthActivityDates(
+        viewMonthKey,
+        billsByDate,
+        compact ? EMPTY_DATE_MAP : paymentsByDate
+      ),
+    [billsByDate, compact, paymentsByDate, viewMonthKey]
   );
 
   const selectedDate = useMemo(() => {
@@ -254,13 +301,87 @@ export default function BillsCalendarCard({
     return toISODate(viewMonthDate);
   }, [selectedDateRaw, monthActivityDates, viewMonthDate, viewMonthKey]);
 
-  const selectedBills = billsByDate.get(selectedDate) || [];
-  const selectedPayments = paymentsByDate.get(selectedDate) || [];
+  const selectedBills = useMemo(
+    () => billsByDate.get(selectedDate) || EMPTY_ITEMS,
+    [billsByDate, selectedDate]
+  );
+  const selectedPayments = useMemo(
+    () => paymentsByDate.get(selectedDate) || EMPTY_ITEMS,
+    [paymentsByDate, selectedDate]
+  );
   const selectedDateLabel = formatShortDate(selectedDate);
   const selectedSummary = summarizeSelectedDate(
     selectedBills.length,
     selectedPayments.length
   );
+  const selectedDueTitles = useMemo(() => {
+    const seen = new Set();
+    const titles = [];
+    selectedBills.forEach((bill, index) => {
+      const name = String(bill?.name || "").trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      titles.push({
+        id: bill?.id || `title-${index}`,
+        name,
+        tone: bill?.tone || "upcoming",
+      });
+    });
+    return titles;
+  }, [selectedBills]);
+  const monthOverview = useMemo(() => {
+    const dueItems = [];
+    const uniqueBillIds = new Set();
+    let dueTotal = 0;
+    let paidTotal = 0;
+    let paymentCount = 0;
+
+    billsByDate.forEach((entries, iso) => {
+      if (monthKeyFromIso(iso) !== viewMonthKey) return;
+      (entries || []).forEach((entry) => {
+        const amount = Number(entry?.displayAmount ?? entry?.amount ?? 0);
+        const safeAmount = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+        dueTotal += safeAmount;
+        if (entry?.billId) uniqueBillIds.add(entry.billId);
+        dueItems.push({
+          id: `${iso}:${entry?.id || entry?.billId || dueItems.length}`,
+          iso,
+          tone: entry?.tone || "upcoming",
+          title: entry?.name || "Bill",
+          statusLabel: entry?.statusLabel || "Upcoming",
+          amount: safeAmount,
+        });
+      });
+    });
+
+    paymentsByDate.forEach((entries, iso) => {
+      if (monthKeyFromIso(iso) !== viewMonthKey) return;
+      (entries || []).forEach((entry) => {
+        const amount = Number(entry?.amount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        paidTotal += amount;
+        paymentCount += 1;
+      });
+    });
+
+    dueItems.sort(
+      (a, b) =>
+        a.iso.localeCompare(b.iso) ||
+        Number(b.amount || 0) - Number(a.amount || 0) ||
+        String(a.title || "").localeCompare(String(b.title || ""))
+    );
+
+    return {
+      billCount: uniqueBillIds.size,
+      dueCount: dueItems.length,
+      dueTotal,
+      paidTotal,
+      paymentCount,
+      dueItems,
+    };
+  }, [billsByDate, paymentsByDate, viewMonthKey]);
 
   const rootClassName = `${contained ? "" : "card "}calendarCard${
     compact ? " isCompact" : ""
@@ -284,32 +405,18 @@ export default function BillsCalendarCard({
     }
   }
 
-  function clearLegendAutoHideTimer() {
-    if (!legendAutoHideTimerRef.current) return;
-    window.clearTimeout(legendAutoHideTimerRef.current);
-    legendAutoHideTimerRef.current = null;
+  function toggleInlineDropdown(panel) {
+    setInlineDropdownOpen((open) => (open === panel ? null : panel));
   }
 
-  function handleLegendPressStart() {
-    legendPressStartRef.current = Date.now();
-    legendPressDurationRef.current = 0;
+  function selectInlineMonth(monthIndex) {
+    setCalendarMonth(createMonthDate(viewMonthDate.getFullYear(), monthIndex));
+    setInlineDropdownOpen(null);
   }
 
-  function handleLegendPressEnd() {
-    const startedAt = legendPressStartRef.current;
-    legendPressStartRef.current = 0;
-    if (!startedAt) return;
-    legendPressDurationRef.current = Math.max(0, Date.now() - startedAt);
-  }
-
-  function handleLegendToggleClick() {
-    setLegendOpen((open) => {
-      if (open) {
-        clearLegendAutoHideTimer();
-        return false;
-      }
-      return true;
-    });
+  function selectInlineYear(year) {
+    setCalendarMonth(createMonthDate(year, viewMonthDate.getMonth()));
+    setInlineDropdownOpen(null);
   }
 
   function toggleMonthPicker() {
@@ -337,91 +444,135 @@ export default function BillsCalendarCard({
     setMonthPickerOpen(false);
   }
 
-  useEffect(() => {
-    if (!compact || !legendOpen) return undefined;
-    const holdDurationMs = legendPressDurationRef.current;
-    legendPressDurationRef.current = 0;
-    const hideDelay =
-      holdDurationMs >= LEGEND_HOLD_THRESHOLD_MS
-        ? LEGEND_HOLD_HIDE_MS
-        : LEGEND_TAP_HIDE_MS;
-    clearLegendAutoHideTimer();
-    legendAutoHideTimerRef.current = window.setTimeout(() => {
-      setLegendOpen(false);
-      legendAutoHideTimerRef.current = null;
-    }, hideDelay);
-    return () => {
-      clearLegendAutoHideTimer();
+  function handleCalendarGridTouchStart(event) {
+    if (!compact || !isMobileSwipeViewport()) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    swipeStateRef.current = {
+      active: true,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      startedAt: Date.now(),
     };
-  }, [compact, legendOpen]);
+  }
 
-  useEffect(() => {
-    if (!compact || !legendOpen) return undefined;
-    function onPointerDown(event) {
-      const root = legendWrapRef.current;
-      if (!root) return;
-      if (root.contains(event.target)) return;
-      clearLegendAutoHideTimer();
-      setLegendOpen(false);
+  function handleCalendarGridTouchMove(event) {
+    const state = swipeStateRef.current;
+    if (!state.active) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    state.lastX = touch.clientX;
+    state.lastY = touch.clientY;
+  }
+
+  function finishCalendarGridSwipe(endX, endY) {
+    const state = swipeStateRef.current;
+    if (!state.active) return;
+    state.active = false;
+
+    const deltaX = endX - state.startX;
+    const deltaY = endY - state.startY;
+    const elapsed = Date.now() - state.startedAt;
+
+    if (elapsed > SWIPE_MAX_DURATION_MS) return;
+    if (Math.abs(deltaX) < SWIPE_DISTANCE_THRESHOLD_PX) return;
+    if (Math.abs(deltaX) < Math.abs(deltaY) * SWIPE_DIRECTION_LOCK_RATIO) return;
+
+    suppressNextDayTapRef.current = true;
+    setCalendarMonth(addMonths(viewMonthDate, deltaX < 0 ? 1 : -1));
+  }
+
+  function handleCalendarGridTouchEnd(event) {
+    const touch = event.changedTouches?.[0];
+    if (!touch) {
+      swipeStateRef.current.active = false;
+      return;
     }
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("touchstart", onPointerDown, { passive: true });
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("touchstart", onPointerDown);
-    };
-  }, [compact, legendOpen]);
+    finishCalendarGridSwipe(touch.clientX, touch.clientY);
+  }
 
-  useEffect(
-    () => () => {
-      clearLegendAutoHideTimer();
-    },
-    []
-  );
+  function handleCalendarGridTouchCancel() {
+    swipeStateRef.current.active = false;
+  }
+
+  function handleCalendarDayClick(iso) {
+    if (suppressNextDayTapRef.current) {
+      suppressNextDayTapRef.current = false;
+      return;
+    }
+    setSelectedDateRaw(iso);
+    onSelectDate?.(iso);
+    if (compact) {
+      setMobileDayActionsVisible(true);
+      setMobileDayInfoOpen(false);
+    }
+  }
+
+  function closeMobileDayPanel() {
+    setMobileDayActionsVisible(false);
+    setMobileDayInfoOpen(false);
+  }
 
   useEffect(() => {
-    if (!monthPickerOpen) return undefined;
+    if (!monthPickerOpen && !inlineDropdownOpen) return undefined;
 
-    function onPointerDown(event) {
-      const root = monthPickerRef.current;
-      if (!root) return;
-      if (root.contains(event.target)) return;
+    function closePickers() {
       setMonthPickerOpen(false);
+      setInlineDropdownOpen(null);
+    }
+
+    function isInsidePickers(target, path = null) {
+      const monthRoot = monthPickerRef.current;
+      const inlineRoot = inlineHeaderRef.current;
+      const roots = [monthRoot, inlineRoot].filter(Boolean);
+      if (!target) return false;
+
+      if (Array.isArray(path) && path.length > 0) {
+        return roots.some((root) => path.includes(root));
+      }
+
+      if (!(target instanceof Node)) return false;
+      return roots.some((root) => root.contains(target));
+    }
+
+    function onGlobalPointerDown(event) {
+      const path =
+        typeof event.composedPath === "function" ? event.composedPath() : null;
+      if (isInsidePickers(event.target, path)) return;
+      closePickers();
+    }
+
+    function onFocusIn(event) {
+      if (isInsidePickers(event.target)) return;
+      closePickers();
     }
 
     function onKeyDown(event) {
       if (event.key !== "Escape") return;
       setMonthPickerOpen(false);
+      setInlineDropdownOpen(null);
     }
 
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("touchstart", onPointerDown, { passive: true });
+    function onWindowBlur() {
+      closePickers();
+    }
+
+    document.addEventListener("pointerdown", onGlobalPointerDown, true);
+    document.addEventListener("focusin", onFocusIn, true);
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("blur", onWindowBlur);
 
     return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("touchstart", onPointerDown);
+      document.removeEventListener("pointerdown", onGlobalPointerDown, true);
+      document.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", onWindowBlur);
     };
-  }, [monthPickerOpen]);
+  }, [inlineDropdownOpen, monthPickerOpen]);
 
-  function renderCalendarInfoTip() {
-    return (
-      <button
-        type="button"
-        className="infoTip calendarInfoTip"
-        aria-label="Calendar day selection info"
-        title="Tap a date to view due bills for that day."
-      >
-        i
-        <span className="infoTipBubble" role="tooltip">
-          Tap a date to view due bills for that day.
-        </span>
-      </button>
-    );
-  }
-
-  function renderCalendarActions() {
+  function renderCalendarActions({ includeToday = true } = {}) {
     return (
       <div className="calendarHeaderActions">
         <button
@@ -445,28 +596,30 @@ export default function BillsCalendarCard({
           </svg>
           <span className="calendarActionLabel">Prev</span>
         </button>
-        <button
-          type="button"
-          className="btn small"
-          aria-label="Go to current month"
-          data-testid="calendar-current-month"
-          onClick={goToCurrentMonth}
-        >
-          <svg
-            className="calendarActionIcon"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
+        {includeToday ? (
+          <button
+            type="button"
+            className="btn small"
+            aria-label="Go to current month"
+            data-testid="calendar-current-month"
+            onClick={goToCurrentMonth}
           >
-            <circle cx="8" cy="8" r="4.2" />
-            <circle cx="8" cy="8" r="1.4" />
-          </svg>
-          <span className="calendarActionLabel">Today</span>
-        </button>
+            <svg
+              className="calendarActionIcon"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="8" cy="8" r="4.2" />
+              <circle cx="8" cy="8" r="1.4" />
+            </svg>
+            <span className="calendarActionLabel">Today</span>
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn small"
@@ -488,6 +641,80 @@ export default function BillsCalendarCard({
           </svg>
           <span className="calendarActionLabel">Next</span>
         </button>
+      </div>
+    );
+  }
+
+  function renderInlineMonthHeader() {
+    const monthIndex = viewMonthDate.getMonth();
+    const yearValue = viewMonthDate.getFullYear();
+
+    return (
+      <div
+        ref={inlineHeaderRef}
+        className="calendarInlineHeader"
+        aria-label="Month and year picker"
+      >
+        <div className={`calendarInlineDropdown isMonth ${inlineDropdownOpen === "month" ? "isOpen" : ""}`}>
+          <button
+            type="button"
+            className="calendarInlineTrigger"
+            aria-label="Select month"
+            aria-haspopup="menu"
+            aria-expanded={inlineDropdownOpen === "month"}
+            data-testid="calendar-inline-month-trigger"
+            onClick={() => toggleInlineDropdown("month")}
+          >
+            <span>{MONTH_LABELS[monthIndex]}</span>
+            <svg className="calendarInlineCaret" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4.5 6.5L8 10l3.5-3.5" />
+            </svg>
+          </button>
+          <div className="calendarInlineMenu" role="menu" aria-label="Month options">
+            {MONTH_LABELS.map((label, index) => (
+              <button
+                key={label}
+                type="button"
+                className={`calendarInlineOption ${index === monthIndex ? "isActive" : ""}`}
+                role="menuitemradio"
+                aria-checked={index === monthIndex}
+                onClick={() => selectInlineMonth(index)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className={`calendarInlineDropdown isYear ${inlineDropdownOpen === "year" ? "isOpen" : ""}`}>
+          <button
+            type="button"
+            className="calendarInlineTrigger calendarInlineTriggerYear"
+            aria-label="Select year"
+            aria-haspopup="menu"
+            aria-expanded={inlineDropdownOpen === "year"}
+            data-testid="calendar-inline-year-trigger"
+            onClick={() => toggleInlineDropdown("year")}
+          >
+            <span>{yearValue}</span>
+            <svg className="calendarInlineCaret" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4.5 6.5L8 10l3.5-3.5" />
+            </svg>
+          </button>
+          <div className="calendarInlineMenu" role="menu" aria-label="Year options">
+            {calendarYearOptions.map((year) => (
+              <button
+                key={year}
+                type="button"
+                className={`calendarInlineOption ${year === yearValue ? "isActive" : ""}`}
+                role="menuitemradio"
+                aria-checked={year === yearValue}
+                onClick={() => selectInlineYear(year)}
+              >
+                {year}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -573,192 +800,345 @@ export default function BillsCalendarCard({
     );
   }
 
-  return (
-    <section className={rootClassName} aria-label="Bills calendar" data-testid="calendar-card">
-      <div className="cardHeader calendarHeader">
-        {showIntro ? (
-          <div className="calendarIntro">
-            <h2>Due Date Calendar</h2>
-            <p className="muted">
-              Due dates are color coded by status so you can scan upcoming risk fast.
-            </p>
-          </div>
-        ) : null}
-        {!compact ? renderCalendarActions() : null}
-      </div>
-
-      {compact ? (
-        <div className="calendarLegendToggleRow">
-          <div ref={legendWrapRef} className="calendarLegendHover">
-            <span className="calendarLegendLabel">Legend:</span>
+  function renderScheduleRail() {
+    const isOverviewExpanded = !isMobileOverviewCollapsed;
+    return (
+      <aside
+        className={`calendarScheduleRail ${isMobileOverviewCollapsed ? "isMobileCollapsed" : ""}`}
+        aria-label="Monthly bills overview"
+      >
+        <div className="calendarScheduleHead">
+          <strong>Month overview</strong>
+          <div className="calendarScheduleHeadActions">
+            {onAddBillAtDate ? (
+              <button
+                type="button"
+                className="calendarScheduleQuickAdd"
+                aria-label={`Add bill due on ${selectedDateLabel}`}
+                title={`Add bill on ${selectedDateLabel}`}
+                data-testid="calendar-add-bill-shortcut"
+                onClick={() => onAddBillAtDate?.(selectedDate)}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path d="M8 3.2v9.6M3.2 8h9.6" />
+                </svg>
+              </button>
+            ) : null}
             <button
               type="button"
-              className="calendarLegendToggle"
-              aria-label="Status colors"
-              aria-expanded={legendOpen}
-              aria-controls="calendar-legend-popover"
-              data-testid="calendar-legend-toggle"
-              onMouseDown={handleLegendPressStart}
-              onMouseUp={handleLegendPressEnd}
-              onMouseLeave={handleLegendPressEnd}
-              onTouchStart={handleLegendPressStart}
-              onTouchEnd={handleLegendPressEnd}
-              onTouchCancel={handleLegendPressEnd}
-              onClick={handleLegendToggleClick}
+              className="calendarScheduleToggle"
+              aria-expanded={isOverviewExpanded}
+              aria-label={isOverviewExpanded ? "Collapse month overview" : "Expand month overview"}
+              onClick={() => setIsMobileOverviewCollapsed((collapsed) => !collapsed)}
             >
-              <span>Status colors</span>
-            </button>
-            <div
-              id="calendar-legend-popover"
-              className={`calendarLegend calendarLegendPopover ${legendOpen ? "isOpen" : ""}`}
-              aria-label="Calendar legend"
-              data-testid="calendar-legend-popover"
-            >
-              <Legend tone="overdue" label="Overdue" />
-              <Legend tone="dueToday" label="Due today" />
-              <Legend tone="dueSoon" label="Due soon" />
-              <Legend tone="partial" label="Partial" />
-              <Legend tone="upcoming" label="Upcoming" />
-              <Legend tone="paid" label="Paid" />
-            </div>
-          </div>
-          {renderCalendarActions()}
-        </div>
-      ) : null}
-
-      {compact ? (
-        <div className="calendarCompactBar">
-          <div className="calendarCompactTitle">
-            {renderMonthPicker()}
-            {!showIntro ? renderCalendarInfoTip() : null}
-          </div>
-        </div>
-      ) : (
-        renderMonthPicker()
-      )}
-
-      {!compact ? (
-        <div className="calendarLegendWrap">
-          <p className="calendarLegendLabel">Legend</p>
-          <div className="calendarLegend" aria-label="Calendar legend">
-            <Legend tone="overdue" label="Overdue" />
-            <Legend tone="dueToday" label="Due today" />
-            <Legend tone="dueSoon" label="Due soon" />
-            <Legend tone="partial" label="Partial" />
-            <Legend tone="upcoming" label="Upcoming" />
-            <Legend tone="paid" label="Paid" />
-          </div>
-        </div>
-      ) : null}
-
-      <div className="calendarGridWrap">
-        <div className="calendarWeekdays">
-          {WEEKDAY_LABELS.map((weekday) => (
-            <span key={weekday}>{weekday}</span>
-          ))}
-        </div>
-        <div className="calendarGrid">
-          {cells.map((cell) => {
-            const dayBills = billsByDate.get(cell.iso) || [];
-            const dayPayments = paymentsByDate.get(cell.iso) || [];
-            const tone = pickCalendarActivityTone(dayBills, dayPayments);
-            const isSelected = cell.iso === selectedDate;
-            const dueCount = dayBills.length;
-            const paymentCount = dayPayments.length;
-            const activityCount = dueCount + paymentCount;
-            const hasActivity = activityCount > 0;
-            const label = activityLabel(dueCount, paymentCount);
-            return (
-              <button
-                key={cell.iso}
-                type="button"
-                className={`calendarDayBtn ${cell.inMonth ? "" : "isOutMonth"} ${
-                  isSelected ? "isSelected" : ""
-                } ${hasActivity ? "hasDue" : ""} calendarTone-${tone}`}
-                data-testid={`calendar-day-${cell.iso}`}
-                onClick={() => setSelectedDateRaw(cell.iso)}
-                aria-pressed={isSelected}
-                aria-label={`${formatShortDate(cell.iso)}${
-                  label ? `, ${label}` : ""
-                }`}
+              <svg
+                className="calendarScheduleToggleIcon"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                <span className="calendarDayNum">{cell.date.getDate()}</span>
-                {hasActivity ? (
-                  <span className="calendarDayMeta">
-                    <span className={`calendarDayDot calendarTone-${tone}`} aria-hidden="true" />
-                    <span>{activityCount}</span>
-                  </span>
-                ) : null}
+                <path d="M4.5 6.5L8 10l3.5-3.5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div className="calendarScheduleSummary" aria-label="Month totals">
+          <div className="calendarScheduleSummaryItem">
+            <span>Due bills</span>
+            <strong>{monthOverview.dueCount}</strong>
+          </div>
+          <div className="calendarScheduleSummaryItem">
+            <span>Due total</span>
+            <strong>{formatMoney(monthOverview.dueTotal)}</strong>
+          </div>
+          <div className="calendarScheduleSummaryItem">
+            <span>Paid</span>
+            <strong>{formatMoney(monthOverview.paidTotal)}</strong>
+          </div>
+        </div>
+        <div className="calendarScheduleList">
+          {monthOverview.dueItems.length === 0 ? (
+            <p className="calendarScheduleEmpty muted small">No due bills this month.</p>
+          ) : (
+            monthOverview.dueItems.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className={`calendarScheduleItem calendarTone-${entry.tone} ${
+                  entry.iso === selectedDate ? "isActive" : ""
+                }`}
+                onClick={() => {
+                  setSelectedDateRaw(entry.iso);
+                  onSelectDate?.(entry.iso);
+                }}
+              >
+                <span className={`calendarScheduleToneBar calendarTone-${entry.tone}`} />
+                <div className="calendarScheduleItemTop">
+                  <span>{formatShortDate(entry.iso)}</span>
+                  <span>{entry.statusLabel}</span>
+                </div>
+                <p className="calendarScheduleTitle">{entry.title}</p>
+                <p className="calendarScheduleAmount">
+                  {entry.amount > 0 ? formatMoney(entry.amount) : ""}
+                </p>
               </button>
-            );
-          })}
+            ))
+          )}
+        </div>
+      </aside>
+    );
+  }
+
+  function renderMobileDayActions() {
+    if (!compact || !mobileDayActionsVisible) return null;
+    return (
+      <div
+        className="calendarMobileDayActions"
+        data-testid="calendar-mobile-day-actions"
+        onMouseDown={closeMobileDayPanel}
+      >
+        <div className="calendarMobileDayCard" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="calendarMobileDayCardHead">
+            <strong className="calendarMobileDayActionsDate">{selectedDateLabel}</strong>
+            <button
+              type="button"
+              className="iconBtn modalCloseBtn calendarMobileDayCloseBtn"
+              aria-label="Close day actions"
+              onClick={closeMobileDayPanel}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </div>
+          <p className="calendarMobileDayActionsHint">Quick actions for this date</p>
+          <div className="calendarMobileDayActionsBtns">
+            <button
+              type="button"
+              className="btn small calendarMobileDayActionBtn isPrimary"
+              onClick={() => {
+                onAddBillAtDate?.(selectedDate);
+                closeMobileDayPanel();
+              }}
+              disabled={!onAddBillAtDate}
+            >
+              Add bill
+            </button>
+            <button
+              type="button"
+              className="btn small calendarMobileDayActionBtn"
+              aria-expanded={mobileDayInfoOpen}
+              onClick={() => setMobileDayInfoOpen((open) => !open)}
+            >
+              {mobileDayInfoOpen ? "Hide info" : "View info"}
+            </button>
+          </div>
+          {mobileDayInfoOpen ? (
+            <div className="calendarMobileDayInfo" data-testid="calendar-mobile-day-info">
+              {selectedDueTitles.length === 0 ? (
+                <p className="muted small">No due bills on this date.</p>
+              ) : (
+                <div className="calendarMobileDayInfoList">
+                  {selectedDueTitles.map((item) => (
+                    <div key={item.id} className="calendarMobileDayInfoItem">
+                      <span
+                        className={`calendarDayItemBar calendarTone-${item.tone}`}
+                        aria-hidden="true"
+                      />
+                      <span>{item.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
+    );
+  }
 
-      <div className="calendarSelectedPanel" data-testid="calendar-selected-panel">
-        <div className="calendarSelectedHead">
-          <strong>{selectedDateLabel}</strong>
-          <span className="muted small">{selectedSummary}</span>
-        </div>
+  return (
+    <section className={rootClassName} aria-label="Bills calendar" data-testid="calendar-card">
+      <div className={`calendarStudioLayout ${compact ? "isStudioCompact" : ""}`}>
+        <div className="calendarStudioMain">
+          {showIntro || !compact ? (
+            <div className="cardHeader calendarHeader">
+              {showIntro ? (
+                <div className="calendarIntro">
+                  <h2>Due Date Calendar</h2>
+                  <p className="muted">
+                    Due dates are color coded by status so you can scan upcoming risk fast.
+                  </p>
+                </div>
+              ) : null}
+              {!compact ? renderCalendarActions() : null}
+            </div>
+          ) : null}
 
-        {selectedBills.length === 0 && selectedPayments.length === 0 ? (
-          <p className="muted small">No due bills or payments on this date.</p>
-        ) : null}
+          {compact ? (
+            <div className="calendarCompactToolbar">
+              <div className="calendarCompactToolbarRow">
+                <div className="calendarCompactToolbarMain">{renderInlineMonthHeader()}</div>
+                <div className="calendarCompactToolbarActions">
+                  {renderCalendarActions({ includeToday: false })}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
-        {selectedBills.length > 0 ? (
-          <>
-            <p className="muted small">Due bills</p>
-            <div className="calendarDueList">
-              {selectedBills.map((bill) => {
-                const tone = bill?.tone || "upcoming";
+          {!compact ? renderMonthPicker() : null}
+
+          <div
+            className="calendarGridWrap"
+            onTouchStart={handleCalendarGridTouchStart}
+            onTouchMove={handleCalendarGridTouchMove}
+            onTouchEnd={handleCalendarGridTouchEnd}
+            onTouchCancel={handleCalendarGridTouchCancel}
+          >
+            <div className="calendarWeekdays">
+              {WEEKDAY_LABELS.map((weekday) => (
+                <span key={weekday}>{weekday}</span>
+              ))}
+            </div>
+            <div className="calendarGrid">
+              {cells.map((cell) => {
+                const rawDayBills = billsByDate.get(cell.iso) || [];
+                const rawDayPayments = paymentsByDate.get(cell.iso) || [];
+                const dayBills = compact && !cell.inMonth ? [] : rawDayBills;
+                const dayPayments = compact ? [] : rawDayPayments;
+                const tone = pickCalendarActivityTone(dayBills, dayPayments);
+                const isSelected = cell.iso === selectedDate;
+                const dueCount = dayBills.length;
+                const paymentCount = dayPayments.length;
+                const hasActivity = dueCount + paymentCount > 0;
+                const label = activityLabel(dueCount, paymentCount);
+                const previewItems = [];
+                const seenNames = new Set();
+
+                dayBills.forEach((entry) => {
+                  const name = String(entry?.name || "").trim();
+                  if (!name) return;
+                  const nameKey = name.toLowerCase();
+                  if (seenNames.has(nameKey)) return;
+                  seenNames.add(nameKey);
+                  previewItems.push({
+                    id: entry?.id || `${cell.iso}-due-${previewItems.length}`,
+                    name,
+                    tone: entry?.tone || tone,
+                  });
+                });
+
+                dayPayments.forEach((entry) => {
+                  const name = String(entry?.billName || "").trim();
+                  if (!name) return;
+                  const nameKey = name.toLowerCase();
+                  if (seenNames.has(nameKey)) return;
+                  seenNames.add(nameKey);
+                  previewItems.push({
+                    id: entry?.id || `${cell.iso}-payment-${previewItems.length}`,
+                    name,
+                    tone: entry?.tone || "paid",
+                  });
+                });
                 return (
                   <button
-                    key={bill.id}
+                    key={cell.iso}
                     type="button"
-                    className={`calendarDueItem calendarTone-${tone}`}
-                    data-testid={`calendar-due-item-${bill.billId}`}
-                    onClick={() => onOpenBill?.(bill.billId)}
+                    className={`calendarDayBtn ${cell.inMonth ? "" : "isOutMonth"} ${
+                      isSelected ? "isSelected" : ""
+                    } ${hasActivity ? "hasDue" : ""} calendarTone-${tone}`}
+                    data-testid={`calendar-day-${cell.iso}`}
+                    onClick={() => handleCalendarDayClick(cell.iso)}
+                    aria-pressed={isSelected}
+                    aria-label={`${formatShortDate(cell.iso)}${
+                      label ? `, ${label}` : ""
+                    }`}
                   >
-                    <span className="calendarDueName">{bill.name}</span>
-                    <span className="calendarDueMeta">
-                      {formatMoney(bill.displayAmount ?? bill.amount)} | {bill.statusLabel}
-                    </span>
+                    <span className="calendarDayNum">{cell.date.getDate()}</span>
+                    {hasActivity && previewItems.length > 0 ? (
+                      <span className="calendarDayItems">
+                        {previewItems.map((item) => (
+                          <span key={item.id} className="calendarDayItem">
+                            <span
+                              className={`calendarDayItemBar calendarTone-${item.tone}`}
+                              aria-hidden="true"
+                            />
+                            <span className="calendarDayItemText">{item.name}</span>
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
             </div>
-          </>
-        ) : null}
+          </div>
+          {compact ? renderMobileDayActions() : null}
 
-        {selectedPayments.length > 0 ? (
-          <>
-            <p className="muted small">Payments recorded</p>
-            <div className="calendarDueList">
-              {selectedPayments.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  className={`calendarDueItem calendarTone-${entry.tone}`}
-                  data-testid={`calendar-payment-item-${entry.id}`}
-                  onClick={() => onOpenBill?.(entry.billId)}
-                >
-                  <span className="calendarDueName">{entry.billName}</span>
-                  <span className="calendarDueMeta">{paymentMetaLabel(entry)}</span>
-                </button>
-              ))}
+          {!compact ? (
+            <div className="calendarSelectedPanel" data-testid="calendar-selected-panel">
+              <div className="calendarSelectedHead">
+                <strong>{selectedDateLabel}</strong>
+                <span className="muted small">{selectedSummary}</span>
+              </div>
+
+              {selectedBills.length === 0 && selectedPayments.length === 0 ? (
+                <p className="muted small">No due bills or payments on this date.</p>
+              ) : null}
+
+              {selectedBills.length > 0 ? (
+                <>
+                  <p className="muted small">Due bills</p>
+                  <div className="calendarDueList">
+                    {selectedBills.map((bill) => {
+                      const tone = bill?.tone || "upcoming";
+                      return (
+                        <button
+                          key={bill.id}
+                          type="button"
+                          className={`calendarDueItem calendarTone-${tone}`}
+                          data-testid={`calendar-due-item-${bill.billId}`}
+                          onClick={() => onOpenBill?.(bill.billId)}
+                        >
+                          <span className="calendarDueName">{bill.name}</span>
+                          <span className="calendarDueMeta">
+                            {formatMoney(bill.displayAmount ?? bill.amount)} | {bill.statusLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+
+              {selectedPayments.length > 0 ? (
+                <>
+                  <p className="muted small">Payments recorded</p>
+                  <div className="calendarDueList">
+                    {selectedPayments.map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className={`calendarDueItem calendarTone-${entry.tone}`}
+                        data-testid={`calendar-payment-item-${entry.id}`}
+                        onClick={() => onOpenBill?.(entry.billId)}
+                      >
+                        <span className="calendarDueName">{entry.billName}</span>
+                        <span className="calendarDueMeta">{paymentMetaLabel(entry)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </div>
-          </>
-        ) : null}
+          ) : null}
+        </div>
+        {compact ? renderScheduleRail() : null}
       </div>
     </section>
-  );
-}
-
-function Legend({ tone, label }) {
-  return (
-    <span className="calendarLegendItem">
-      <span className={`calendarLegendDot calendarTone-${tone}`} aria-hidden="true" />
-      <span>{label}</span>
-    </span>
   );
 }

@@ -40,15 +40,16 @@ function defaultDueDateValue() {
   return toISODate(startOfToday());
 }
 
-function buildInitialDraft(bill) {
+function buildInitialDraft(bill, initialDueDate = "") {
   const cadence = bill?.cadence || "monthly";
   const rawDueDate =
     typeof bill?.dueDate === "string" ? bill.dueDate.trim() : "";
   const noDueDate = cadence === "one-time" && rawDueDate.length === 0;
+  const seededDueDate = !bill && isISODateString(initialDueDate) ? initialDueDate : "";
   return {
     name: bill?.name || "",
     category: bill?.category || "Other",
-    dueDate: rawDueDate || defaultDueDateValue(),
+    dueDate: rawDueDate || seededDueDate || defaultDueDateValue(),
     amount: String(bill?.amount ?? 0),
     cadence,
     noDueDate,
@@ -79,9 +80,12 @@ function normalizeDraftForCompare(draft) {
   };
 }
 
-export default function BillEditorDialog({ onClose, bill, onSave }) {
+export default function BillEditorDialog({ onClose, bill, onSave, initialDueDate = "" }) {
   // Hooks must always run
-  const initialDraft = useMemo(() => buildInitialDraft(bill), [bill]);
+  const initialDraft = useMemo(
+    () => buildInitialDraft(bill, initialDueDate),
+    [bill, initialDueDate]
+  );
   const [draft, setDraft] = useState(initialDraft);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -224,7 +228,12 @@ export default function BillEditorDialog({ onClose, bill, onSave }) {
               due date, while recurring and statement-plan bills still track one.
             </p>
           </div>
-          <button className="iconBtn" disabled={isSaving} onClick={handleRequestClose} aria-label="Close editor">
+          <button
+            className="iconBtn modalCloseBtn"
+            disabled={isSaving}
+            onClick={handleRequestClose}
+            aria-label="Close editor"
+          >
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M4 4l8 8M12 4l-8 8" />
             </svg>

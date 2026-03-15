@@ -7,6 +7,18 @@
   --primary: #5b8cff;
   --danger: #ff5b6e;
   --warn: #ffcc66;
+  --surface-1: #0f1729;
+  --surface-2: #12203a;
+  --surface-3: #152741;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --shadow-sm: 0 8px 18px rgba(2, 8, 22, 0.28);
+  --shadow-md: 0 14px 30px rgba(2, 8, 22, 0.36);
+  --shadow-lg: 0 22px 48px rgba(2, 8, 22, 0.44);
+  --ring: rgba(112, 154, 248, 0.36);
+  --ring-strong: rgba(132, 173, 255, 0.82);
+  --font-ui: "Segoe UI Variable Text", "Avenir Next", "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-duration: 220ms;
   --icon-sm: 14px;
@@ -14,16 +26,23 @@
   --icon-lg: 20px;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(134, 168, 232, 0.68) transparent;
+}
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  font-family: var(--font-ui);
   background:
     radial-gradient(900px 420px at 50% -120px, rgba(91, 140, 255, 0.13), transparent 72%),
     linear-gradient(180deg, #080c15 0%, #0b0f1a 46%, #0d172a 100%);
   color: var(--text);
   width: 100%;
   overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 h1,h2,h3 { margin: 0; }
 .muted { color: var(--muted); }
@@ -32,6 +51,27 @@ h1,h2,h3 { margin: 0; }
 .right { text-align: right; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hiddenFileInput { display: none; }
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background: linear-gradient(180deg, rgba(156, 186, 242, 0.82), rgba(106, 142, 208, 0.88));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(177, 203, 248, 0.9), rgba(121, 155, 219, 0.94));
+}
 
 .app {
   min-height: 100vh;
@@ -126,12 +166,20 @@ h1,h2,h3 { margin: 0; }
 
 .header {
   border-bottom: 1px solid var(--border);
-  background: rgba(17, 21, 34, 0.7);
+  background: linear-gradient(
+    90deg,
+    rgba(58, 82, 118, 0.14) 0%,
+    rgba(17, 21, 34, 0.82) 24%,
+    rgba(17, 21, 34, 0.82) 76%,
+    rgba(58, 82, 118, 0.14) 100%
+  );
   position: sticky;
   top: 0;
   backdrop-filter: blur(10px);
   z-index: 20;
-  box-shadow: 0 6px 18px rgba(3, 8, 22, 0.3);
+  box-shadow:
+    inset 0 -1px 0 rgba(120, 154, 222, 0.1),
+    0 6px 16px rgba(3, 8, 22, 0.22);
 }
 
 .headerInner {
@@ -163,8 +211,9 @@ h1,h2,h3 { margin: 0; }
 .mobileMenuPanel,
 .mobileMenuBackdrop,
 .headerRightSpacer,
-.mobileAddBtn,
-.mobileBottomNav {
+.mobileBottomNav,
+.mobileQuickFab,
+.mobileQuickSheet {
   display: none;
 }
 
@@ -326,11 +375,15 @@ h1,h2,h3 { margin: 0; }
 }
 
 .card {
-  background: var(--card);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)),
+    var(--card);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   padding: 14px;
-  box-shadow: 0 10px 24px rgba(3, 8, 22, 0.34);
+  box-shadow:
+    var(--shadow-md),
+    inset 0 1px 0 rgba(152, 183, 241, 0.08);
 }
 .cardHeader {
   display: flex; gap: 12px; justify-content: space-between; align-items: center;
@@ -342,7 +395,7 @@ h1,h2,h3 { margin: 0; }
 /* Bills tab spacing */
 .billsCard {
   padding: 20px;
-  box-shadow: 0 14px 34px rgba(3, 8, 24, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 .billsHeader {
@@ -426,6 +479,10 @@ h1,h2,h3 { margin: 0; }
   grid-template-columns: minmax(280px, 1fr) 200px;
   gap: 10px;
   align-items: center;
+}
+
+.mobileSearchMorph {
+  display: contents;
 }
 
 .searchToggleBtn {
@@ -522,8 +579,8 @@ h1,h2,h3 { margin: 0; }
 }
 
 .quickFilterChip {
-  border: 1px solid var(--border);
-  background: #0f1320;
+  border: 0;
+  background: transparent;
   color: var(--muted);
   border-radius: 999px;
   padding: 6px 10px;
@@ -535,8 +592,8 @@ h1,h2,h3 { margin: 0; }
 
 .quickFilterChip.active {
   color: #dbe6ff;
-  border-color: rgba(91, 140, 255, 0.55);
-  background: rgba(91, 140, 255, 0.18);
+  background: transparent;
+  font-weight: 700;
 }
 
 .iconActionBtn {
@@ -680,12 +737,19 @@ h1,h2,h3 { margin: 0; }
   }
 
   .headerRightSpacer {
-    display: none;
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: block;
+    width: 40px;
+    height: 40px;
+    pointer-events: none;
   }
 
   .mobileMenuBtn {
     position: absolute;
-    left: 0;
+    left: 10px;
     top: 50%;
     transform: translateY(-50%);
     display: inline-flex;
@@ -727,30 +791,15 @@ h1,h2,h3 { margin: 0; }
       transform var(--motion-duration) var(--motion-ease);
   }
 
-  .mobileAddBtn {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    border: 0;
-    background: transparent;
-    color: var(--text);
-    padding: 0;
-    cursor: pointer;
-  }
-
-  .mobileAddBtn svg {
-    width: 20px;
-    height: 20px;
-    display: block;
-  }
-
   .mobileBottomNav {
+    display: grid;
+  }
+
+  .mobileQuickFab {
+    display: inline-flex;
+  }
+
+  .mobileQuickSheet {
     display: grid;
   }
 
@@ -813,30 +862,69 @@ h1,h2,h3 { margin: 0; }
 
   .billsFiltersRow {
     position: relative;
-    grid-template-columns: 42px minmax(0, 1fr);
+    display: flex;
     gap: 8px;
     width: 100%;
     align-items: center;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 4px;
-    background: rgba(15, 19, 32, 0.55);
+    border: 1px solid rgba(101, 126, 171, 0.4);
+    border-radius: 14px;
+    padding: 4px 6px;
+    background: linear-gradient(180deg, rgba(16, 28, 49, 0.86), rgba(12, 22, 39, 0.9));
+    box-shadow: inset 0 1px 0 rgba(170, 196, 242, 0.08);
+  }
+
+  .mobileSearchMorph {
+    --search-btn-size: 32px;
+    position: relative;
+    z-index: 9;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: var(--search-btn-size);
+    height: var(--search-btn-size);
+    min-height: var(--search-btn-size);
+    min-width: var(--search-btn-size);
+    padding: 0;
+    overflow: hidden;
+    border-radius: 999px;
+    border: 1px solid rgba(112, 137, 182, 0.34);
+    background: rgba(19, 33, 56, 0.5);
+    box-shadow: inset 0 1px 0 rgba(173, 196, 240, 0.08);
+    transition:
+      width 0.4s ease,
+      border-color 0.4s ease,
+      background-color 0.4s ease;
+  }
+
+  .mobileSearchMorph.open {
+    width: 100%;
+    border-color: rgba(131, 166, 227, 0.52);
+    background: linear-gradient(180deg, rgba(20, 35, 60, 0.96), rgba(14, 25, 44, 0.98));
   }
 
   .searchToggleBtn {
+    position: absolute;
+    right: auto;
+    left: 0;
+    top: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
-    min-height: 40px;
-    border-radius: 8px;
-    padding: 0;
+    width: var(--search-btn-size);
+    height: var(--search-btn-size);
+    min-height: var(--search-btn-size);
+    flex: 0 0 var(--search-btn-size);
+    border-radius: 999px;
     appearance: none;
     border: 0;
     background: transparent;
-    color: #cfd9ef;
+    color: #b9cbea;
     cursor: pointer;
+    box-shadow: none;
+    transition:
+      left 0.4s ease,
+      background-color 0.4s ease,
+      color 0.4s ease;
   }
 
   .searchToggleBtn svg {
@@ -844,37 +932,73 @@ h1,h2,h3 { margin: 0; }
     height: var(--icon-md);
   }
 
+  .mobileSearchMorph.open .searchToggleBtn {
+    left: calc(100% - var(--search-btn-size));
+    background: #eff5ff;
+    color: #1b2d47;
+  }
+
   .searchToggleBtn:hover {
-    background: rgba(255, 255, 255, 0.04);
+    color: #dce9ff;
   }
 
   .billsSearchInput {
     display: block;
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: calc(100% + 8px);
-    z-index: 5;
+    position: static;
+    width: 0;
+    min-width: 0;
+    flex: 0 0 auto;
+    max-width: none;
+    height: var(--search-btn-size);
+    min-height: var(--search-btn-size);
+    margin: 0;
+    padding: 0;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: #eaf2ff;
+    font-size: 12px;
+    line-height: 1;
     opacity: 0;
-    transform: translateY(-8px) scale(0.98);
-    max-height: 0;
-    overflow: hidden;
     pointer-events: none;
     transition:
-      opacity var(--motion-duration) var(--motion-ease),
-      transform var(--motion-duration) var(--motion-ease),
-      max-height var(--motion-duration) var(--motion-ease);
+      width 0.4s ease,
+      padding 0.4s ease,
+      opacity 0.2s ease;
+  }
+
+  .billsSearchInput::placeholder {
+    color: #9cb2d9;
   }
 
   .billsFiltersRow.searchOpen .billsSearchInput {
     opacity: 1;
-    transform: translateY(0) scale(1);
-    max-height: 52px;
+    width: calc(100% - var(--search-btn-size));
+    padding: 0 8px 0 12px;
     pointer-events: auto;
   }
 
   .billsFiltersRow.searchOpen {
-    margin-bottom: 52px;
+    margin-bottom: 0;
+  }
+
+  .quickFilterChips {
+    flex: 1 1 auto;
+    min-width: 0;
+    transition:
+      opacity var(--motion-duration) var(--motion-ease),
+      transform var(--motion-duration) var(--motion-ease),
+      width 260ms ease,
+      margin 260ms ease;
+  }
+
+  .billsFiltersRow.searchOpen .quickFilterChips {
+    opacity: 0;
+    transform: translateX(8px);
+    pointer-events: none;
+    width: 0;
+    margin: 0;
+    overflow: hidden;
   }
 
   .billsFilterSelect {
@@ -948,7 +1072,9 @@ h1,h2,h3 { margin: 0; }
   .billsMiniStats {
     grid-template-columns: 1fr;
     gap: 8px;
-    margin: 0 0 10px;
+    margin: 6px 0 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(93, 118, 163, 0.24);
   }
 
   .billsMiniStat {
@@ -966,30 +1092,140 @@ h1,h2,h3 { margin: 0; }
 
   .quickFilterChips {
     display: flex;
-    gap: 6px;
-    overflow-x: auto;
+    gap: 4px;
+    overflow: visible;
     min-width: 0;
-    padding: 1px 2px 1px 0;
-    margin: 0 0 0 6px;
-    -webkit-overflow-scrolling: touch;
+    padding: 1px 0;
+    margin: 0;
+    flex-wrap: nowrap;
   }
 
   .quickFilterChip {
-    min-height: 34px;
-    padding: 0 11px;
+    min-height: 31px;
+    padding: 0 10px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 11.5px;
     line-height: 1;
+    position: relative;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
+    border: 0;
+    background: transparent;
+    color: #a4b8dd;
+    font-weight: 600;
+    box-shadow: none;
+  }
+
+  .quickFilterChip::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 4px;
+    height: 2px;
+    border-radius: 999px;
+    background: rgba(140, 175, 238, 0.86);
+    opacity: 0;
+    transform: scaleX(0.45);
+    transform-origin: center;
+    transition:
+      opacity var(--motion-duration) var(--motion-ease),
+      transform var(--motion-duration) var(--motion-ease);
   }
 
   .quickFilterChip.active {
-    color: #e6eeff;
-    border-color: rgba(91, 140, 255, 0.7);
-    background: rgba(91, 140, 255, 0.2);
+    color: #f2f7ff;
+    background: transparent;
+    box-shadow: none;
+    font-weight: 700;
+  }
+
+  .quickFilterChip.active::after {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+
+  .quickFilterMoreWrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .quickFilterMoreChip {
+    min-width: 26px;
+    width: 26px;
+    padding: 0;
+    justify-content: center;
+    color: #9fb4db;
+    opacity: 0.84;
+  }
+
+  .quickFilterMoreChip .quickFilterMoreIcon {
+    width: 15px;
+    height: 15px;
+    display: block;
+    color: currentColor;
+  }
+
+  .quickFilterMoreChip::after {
+    display: none;
+  }
+
+  .quickFilterMoreChip.menuOpen {
+    color: #e9f2ff;
+    opacity: 1;
+  }
+
+  .quickFilterMoreBackdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 38;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .quickFilterMoreMenu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 7px);
+    z-index: 39;
+    min-width: 144px;
+    display: grid;
+    gap: 3px;
+    padding: 8px 7px;
+    border-radius: 12px;
+    border: 1px solid rgba(116, 144, 192, 0.56);
+    background: linear-gradient(180deg, rgba(16, 28, 50, 0.98), rgba(11, 21, 38, 0.99));
+    box-shadow: 0 16px 30px rgba(3, 9, 22, 0.56);
+  }
+
+  .quickFilterMoreItem {
+    min-height: 36px;
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 9px;
+    border: 0;
+    background: transparent;
+    color: #c6d6f2;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .quickFilterMoreItem:hover {
+    background: rgba(69, 104, 163, 0.24);
+    color: #edf5ff;
+  }
+
+  .quickFilterMoreItem.active {
+    color: #e6efff;
+    background: rgba(83, 122, 192, 0.36);
   }
 
   .calendarCard {
@@ -1052,12 +1288,19 @@ h1,h2,h3 { margin: 0; }
 
 .input, .select, .textarea {
   width: 100%;
+  min-height: 42px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: #10182b;
+  background: linear-gradient(180deg, rgba(19, 30, 52, 0.94), rgba(14, 24, 43, 0.95));
   color: var(--text);
   outline: none;
+  box-shadow: inset 0 1px 0 rgba(153, 182, 237, 0.08);
+  transition:
+    border-color var(--motion-duration) var(--motion-ease),
+    box-shadow var(--motion-duration) var(--motion-ease),
+    background-color var(--motion-duration) var(--motion-ease),
+    transform var(--motion-duration) var(--motion-ease);
 }
 
 /* Keep dark input theme when browser autofill applies */
@@ -1096,13 +1339,29 @@ h1,h2,h3 { margin: 0; }
     background-size 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.input:hover,
+.select:hover,
+.textarea:hover {
+  border-color: rgba(114, 138, 184, 0.9);
+}
+
 .select:hover {
-  border-color: #4b5f86;
+  border-color: rgba(114, 138, 184, 0.9);
+}
+
+.input:focus,
+.textarea:focus {
+  border-color: rgba(91, 140, 255, 0.7);
+  box-shadow:
+    0 0 0 3px rgba(91, 140, 255, 0.16),
+    inset 0 1px 0 rgba(182, 205, 248, 0.15);
 }
 
 .select:focus {
   border-color: rgba(91, 140, 255, 0.65);
-  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.14);
+  box-shadow:
+    0 0 0 3px rgba(91, 140, 255, 0.16),
+    inset 0 1px 0 rgba(182, 205, 248, 0.15);
   background-position:
     calc(100% - 18px) 50%,
     calc(100% - 13px) 50%;
@@ -1111,43 +1370,144 @@ h1,h2,h3 { margin: 0; }
 .textarea { min-height: 90px; resize: vertical; }
 
 .btn {
-  padding: 9px 11px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #10182b;
+  min-height: 38px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(95, 119, 167, 0.64);
+  background: linear-gradient(180deg, rgba(22, 36, 60, 0.96), rgba(15, 26, 46, 0.96));
   color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  box-shadow: inset 0 1px 0 rgba(169, 194, 245, 0.08);
   cursor: pointer;
+  transition:
+    border-color var(--motion-duration) var(--motion-ease),
+    background var(--motion-duration) var(--motion-ease),
+    box-shadow var(--motion-duration) var(--motion-ease),
+    transform var(--motion-duration) var(--motion-ease),
+    color var(--motion-duration) var(--motion-ease);
 }
-.btn:hover { border-color: #4b5f86; }
+.btn:hover {
+  border-color: rgba(126, 156, 212, 0.92);
+  background: linear-gradient(180deg, rgba(26, 43, 70, 0.98), rgba(18, 32, 55, 0.98));
+  box-shadow:
+    0 8px 18px rgba(3, 9, 23, 0.28),
+    inset 0 1px 0 rgba(181, 206, 251, 0.13);
+  transform: translateY(-1px);
+}
+.btn:active {
+  transform: translateY(0);
+}
 .btn:disabled {
   cursor: not-allowed;
   opacity: 0.66;
   border-color: #2a3550;
+  transform: none;
+  box-shadow: none;
 }
 .btn[aria-busy="true"] {
   cursor: progress;
 }
-.btn.primary { background: var(--primary); border-color: transparent; color: #081022; font-weight: 700; }
-.btn.danger { background: transparent; border-color: rgba(255, 91, 110, 0.4); color: #ffd3d9; }
-.btn.small { padding: 6px 9px; border-radius: 9px; font-size: 12px; }
+.btn.primary {
+  background: linear-gradient(180deg, rgba(103, 162, 255, 0.98), rgba(74, 136, 246, 0.98));
+  border-color: rgba(162, 197, 255, 0.46);
+  color: #081022;
+  font-weight: 700;
+  box-shadow:
+    0 10px 22px rgba(31, 93, 190, 0.34),
+    inset 0 1px 0 rgba(225, 237, 255, 0.34);
+}
+.btn.primary:hover {
+  background: linear-gradient(180deg, rgba(119, 173, 255, 0.99), rgba(88, 146, 248, 0.99));
+  border-color: rgba(182, 212, 255, 0.56);
+}
+.btn.danger {
+  background: linear-gradient(180deg, rgba(112, 32, 51, 0.26), rgba(74, 22, 35, 0.34));
+  border-color: rgba(255, 91, 110, 0.48);
+  color: #ffdbe1;
+}
+.btn.danger:hover {
+  background: linear-gradient(180deg, rgba(132, 38, 60, 0.32), rgba(92, 26, 43, 0.4));
+  border-color: rgba(255, 105, 126, 0.62);
+}
+.btn.small {
+  min-height: 32px;
+  padding: 6px 9px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.btn:focus-visible,
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible,
+.iconBtn:focus-visible {
+  outline: 0;
+  border-color: var(--ring-strong);
+  box-shadow:
+    0 0 0 2px rgba(11, 15, 26, 0.96),
+    0 0 0 4px var(--ring);
+}
 
 .btnLoadingSpin {
   animation: splashSpin 860ms linear infinite;
 }
 
-.tableWrap { overflow-x: auto; max-width: 100%; border-radius: 12px; border: 1px solid var(--border); }
+.tableWrap {
+  overflow-x: auto;
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(13, 20, 36, 0.75), rgba(10, 16, 30, 0.78));
+  box-shadow: inset 0 1px 0 rgba(149, 177, 231, 0.08);
+}
 .billsTableWrap { overflow-y: visible; }
 .table { width: 100%; border-collapse: collapse; min-width: 900px; }
-.table th, .table td { padding: 12px; border-bottom: 1px solid var(--border); }
+.table th, .table td { padding: 12px; border-bottom: 1px solid rgba(58, 75, 109, 0.86); }
 .table th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+.table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.01);
+}
 
 .table th.right {
   text-align: right;
 }
 
 /* Payment history layout: center Amount and separate Note */
+.paymentHistoryCard {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.paymentEntryGrid {
+  margin-top: 10px;
+}
+
+.paymentHistoryTitle {
+  font-size: 20px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.paymentHistoryWrap {
+  margin-top: 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
 .paymentHistoryTable {
   table-layout: fixed;
+}
+
+.paymentHistoryTable .paymentDateCol {
+  font-weight: 600;
+  color: #d6e2f8;
 }
 
 .paymentHistoryTable .amountCol {
@@ -1161,10 +1521,28 @@ h1,h2,h3 { margin: 0; }
   border-left: 1px solid var(--border);
 }
 
+.paymentHistoryTable .paymentStatusCol {
+  color: #a6b8d9;
+}
+
+.paymentHistoryTable .paymentActionsCol {
+  white-space: nowrap;
+}
+
+.paymentAutoTag {
+  color: #7f90af;
+  font-weight: 500;
+}
+
 .paymentRowActions {
   display: inline-flex;
   gap: 6px;
   justify-content: flex-end;
+}
+
+.paymentActionsSheetBackdrop,
+.paymentActionsSheet {
+  display: none;
 }
 
 .row:hover { background: rgba(255,255,255,0.03); }
@@ -1267,8 +1645,23 @@ h1,h2,h3 { margin: 0; }
   text-overflow: ellipsis;
 }
 .dueCell { display: flex; gap: 8px; align-items: baseline; }
+.dueDesktopDelta {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(126, 156, 214, 0.24);
+  background: rgba(38, 58, 96, 0.26);
+  color: #a8bbdf;
+  font-weight: 600;
+  line-height: 1.35;
+}
 .dueMobileText,
 .dueMobileDelta {
+  display: none;
+}
+
+.dueMobileTapTrigger {
   display: none;
 }
 .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
@@ -1293,6 +1686,23 @@ h1,h2,h3 { margin: 0; }
 
 .billOverviewActions .btn:not(.primary) {
   min-width: 92px;
+}
+
+.billOverviewSecondaryBtn,
+.billOverviewMoreBtn {
+  border-color: rgba(104, 127, 171, 0.34);
+  background: rgba(17, 29, 50, 0.42);
+  color: #b2c4e4;
+  box-shadow: none;
+}
+
+.billOverviewSecondaryBtn:hover,
+.billOverviewMoreBtn:hover {
+  border-color: rgba(122, 153, 208, 0.52);
+  background: rgba(26, 41, 66, 0.56);
+  color: #d3e1fb;
+  box-shadow: inset 0 1px 0 rgba(169, 194, 245, 0.08);
+  transform: none;
 }
 
 .billActionsMoreWrap {
@@ -1418,7 +1828,7 @@ h1,h2,h3 { margin: 0; }
   right: 10px;
   bottom: calc(10px + env(safe-area-inset-bottom));
   z-index: 56;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 6px;
   border-radius: 14px;
@@ -1459,6 +1869,114 @@ h1,h2,h3 { margin: 0; }
 
 .mobileBottomNavBtn.is-signed-in:not(.active) {
   color: #bdeed1;
+}
+
+.mobileQuickFab {
+  position: fixed;
+  right: 14px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 57;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  border: 1px solid rgba(121, 155, 214, 0.52);
+  background: linear-gradient(180deg, rgba(75, 152, 255, 0.94), rgba(51, 125, 236, 0.96));
+  color: #f4f9ff;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 14px 28px rgba(9, 34, 73, 0.44);
+  cursor: pointer;
+}
+
+.mobileQuickFab svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.mobileQuickSheet {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  background: rgba(6, 10, 18, 0.58);
+  backdrop-filter: blur(2px);
+  padding: 12px 10px calc(82px + env(safe-area-inset-bottom));
+  align-content: end;
+}
+
+.mobileQuickSheetCard {
+  border: 1px solid rgba(119, 146, 193, 0.34);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(22, 36, 59, 0.96), rgba(14, 25, 43, 0.98));
+  box-shadow: 0 18px 34px rgba(3, 8, 18, 0.52);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.mobileQuickSheetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mobileQuickSheetHead strong {
+  font-size: 14px;
+  color: #edf4ff;
+}
+
+.mobileQuickSheetList {
+  display: grid;
+  gap: 8px;
+}
+
+.mobileQuickSheetAction {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(111, 139, 185, 0.38);
+  border-radius: 11px;
+  background: rgba(17, 32, 55, 0.74);
+  color: #d7e6ff;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.mobileQuickSheetAction strong {
+  font-size: 13px;
+  line-height: 1.2;
+  color: #edf4ff;
+}
+
+.mobileQuickSheetAction span {
+  font-size: 11px;
+  line-height: 1.2;
+  color: #a8bfdc;
+}
+
+.mobileQuickSheetAction.isPrimary {
+  border-color: rgba(129, 183, 255, 0.74);
+  background: linear-gradient(180deg, rgba(75, 152, 255, 0.92), rgba(51, 125, 236, 0.95));
+}
+
+.mobileQuickSheetAction.isPrimary strong,
+.mobileQuickSheetAction.isPrimary span {
+  color: #f4f9ff;
+}
+
+.mobileQuickSheetAction:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mobileQuickSheetEmpty {
+  margin: 0;
+  padding: 8px 2px 4px;
 }
 
 .banner {
@@ -2726,7 +3244,9 @@ h1,h2,h3 { margin: 0; }
 
 .modalBackdrop {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,0.55);
+  background: rgba(4, 9, 18, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   display: flex; align-items: center; justify-content: center;
   padding: 16px;
   z-index: 70;
@@ -2734,12 +3254,15 @@ h1,h2,h3 { margin: 0; }
 }
 .modal {
   width: 100%;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(19, 30, 51, 0.97), rgba(14, 22, 39, 0.98));
+  border: 1px solid rgba(64, 84, 120, 0.78);
+  border-radius: var(--radius-lg);
   overflow: hidden;
   transform-origin: 50% 28%;
   will-change: transform, opacity;
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(165, 191, 245, 0.1);
   animation: modalInDesktop var(--motion-duration) var(--motion-ease);
 }
 
@@ -2909,6 +3432,21 @@ h1,h2,h3 { margin: 0; }
   display: flex; justify-content: space-between; align-items: flex-start;
   border-bottom: 1px solid var(--border);
   gap: 12px;
+  background: linear-gradient(180deg, rgba(20, 33, 56, 0.8), rgba(17, 27, 46, 0.74));
+}
+
+.billDetailsHeader {
+  align-items: flex-start;
+}
+
+.billDetailsHeaderMain {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.billDetailsTitle {
+  display: block;
+  max-width: 100%;
 }
 
 .billHeaderMeta {
@@ -2916,27 +3454,51 @@ h1,h2,h3 { margin: 0; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: #95a2bc;
   font-size: 13px;
   line-height: 1.3;
 }
 
+.billHeaderMetaItem {
+  color: #8fa0bf;
+  font-weight: 500;
+}
+
 .billHeaderMetaSep {
-  color: #5f6d89;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(126, 144, 176, 0.38);
+  flex-shrink: 0;
+}
+
+.billHeaderMetaDue {
+  margin-right: 2px;
 }
 
 .billHeaderMetaAmount {
-  color: #c7dcff;
-  font-weight: 700;
+  margin-left: 4px;
+  color: #d4e6ff;
+  font-weight: 600;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
+}
+
+.billDetailsHeader .modalCloseBtn {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 12px;
+  align-self: flex-start;
+  margin-top: 1px;
 }
 .modalBody { padding: 14px; display: grid; gap: 12px; }
 .modalFooter {
   padding: 14px;
   border-top: 1px solid var(--border);
   display: flex; justify-content: flex-end; gap: 10px;
+  background: linear-gradient(180deg, rgba(17, 27, 46, 0.66), rgba(14, 22, 38, 0.76));
 }
 
 .editorModalFooter {
@@ -4273,6 +4835,15 @@ h1,h2,h3 { margin: 0; }
   border-color: rgba(124, 142, 176, 0.34);
   background: rgba(255, 255, 255, 0.04);
 }
+
+.modalCloseBtn {
+  border-color: transparent;
+}
+
+.modalCloseBtn:hover {
+  border-color: rgba(255, 94, 120, 0.85);
+}
+
 .iconBtn:disabled {
   opacity: 0.55;
   cursor: default;
@@ -4389,11 +4960,17 @@ h1,h2,h3 { margin: 0; }
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: #0f1320;
+  background: linear-gradient(180deg, rgba(16, 24, 41, 0.94), rgba(12, 19, 34, 0.96));
   color: var(--muted);
   cursor: pointer;
 }
-.tab.active { color: var(--text); border-color: rgba(91,140,255,0.5); }
+.tab.active {
+  color: #f2f7ff;
+  font-weight: 700;
+  border-color: rgba(125, 165, 241, 0.72);
+  background: linear-gradient(180deg, rgba(39, 64, 106, 0.72), rgba(24, 42, 73, 0.8));
+  box-shadow: inset 0 1px 0 rgba(171, 199, 247, 0.2);
+}
 .rowBetween { display: flex; justify-content: space-between; align-items: center; }
 .rowGap { display: grid; gap: 10px; }
 .billOverviewFoot {
@@ -4411,16 +4988,16 @@ h1,h2,h3 { margin: 0; }
 .billOverviewHint {
   margin: 0;
   max-width: 66ch;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border-radius: 10px;
   border: 1px solid rgba(111, 132, 176, 0.2);
   background: rgba(111, 132, 176, 0.07);
-  color: #a7b6d2;
-  font-size: 11px;
-  line-height: 1.32;
+  color: #9fb1d3;
+  font-size: 10.5px;
+  line-height: 1.3;
   display: inline-flex;
-  align-items: flex-start;
-  gap: 7px;
+  align-items: center;
+  gap: 8px;
 }
 
 .billOverviewHint::before {
@@ -4436,7 +5013,50 @@ h1,h2,h3 { margin: 0; }
   font-size: 9px;
   font-weight: 700;
   flex-shrink: 0;
-  margin-top: 1px;
+}
+
+.billOverviewHintText {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.billOverviewHintMain {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.billOverviewHintSummary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.billOverviewHintLink {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: #b9cefb;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.15;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 1px;
+}
+
+.billOverviewHintLink:hover {
+  color: #d4e2ff;
+}
+
+.billOverviewHintDetails {
+  color: #90a4cb;
+  font-size: 10px;
+  line-height: 1.26;
 }
 .cardInner {
   border: 1px solid var(--border);
@@ -4639,15 +5259,24 @@ h1,h2,h3 { margin: 0; }
     font-size: 11px;
   }
 
+  .tab.active {
+    border-color: rgba(138, 175, 247, 0.78);
+    background: linear-gradient(180deg, rgba(45, 73, 119, 0.78), rgba(29, 50, 86, 0.84));
+  }
+
   .modalBody {
-    padding: 10px;
-    gap: 8px;
+    padding: 9px;
+    gap: 7px;
   }
 
   .stat,
   .cardInner {
-    padding: 9px;
+    padding: 8px;
     border-radius: 11px;
+  }
+
+  .modal.modal-lg .modalBody .grid3 {
+    gap: 7px;
   }
 
   .stat .muted.small {
@@ -4666,27 +5295,27 @@ h1,h2,h3 { margin: 0; }
 
   .billOverviewHint {
     max-width: none;
-    padding: 6px 8px;
-    font-size: 11px;
-    line-height: 1.3;
+    padding: 5px 8px;
+    font-size: 10.5px;
+    line-height: 1.25;
   }
 
   .billOverviewFoot {
     display: grid;
-    gap: 8px;
+    gap: 6px;
   }
 
   .modalBody .actions {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 6px;
   }
 
   .modalBody .actions .btn {
     width: 100%;
-    min-height: 36px;
-    padding: 8px 10px;
-    font-size: 12px;
+    min-height: 34px;
+    padding: 7px 10px;
+    font-size: 11.5px;
   }
 
   .modalBody .actions.right {
@@ -4698,11 +5327,11 @@ h1,h2,h3 { margin: 0; }
     grid-template-columns: 1fr;
     width: 100%;
     margin-left: 0;
-    gap: 6px;
+    gap: 5px;
   }
 
   .billOverviewActions .btn {
-    min-height: 36px;
+    min-height: 34px;
   }
 
   .billOverviewActions .btn.primary {
@@ -4716,6 +5345,13 @@ h1,h2,h3 { margin: 0; }
   .billActionsMoreBtn {
     min-width: 0;
     width: 100%;
+  }
+
+  .billOverviewSecondaryBtn,
+  .billOverviewMoreBtn {
+    background: transparent;
+    border-color: rgba(107, 132, 177, 0.4);
+    color: #9fb2d7;
   }
 
   .billActionsMoreWrap {
@@ -4822,11 +5458,244 @@ h1,h2,h3 { margin: 0; }
   }
 
   .paymentHistoryTable .amountCol {
-    width: 124px;
+    width: auto;
+    text-align: right;
   }
 
   .paymentHistoryTable .noteCol {
-    padding-left: 12px;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .paymentHistoryTitle {
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+
+  .paymentsTabBody {
+    gap: 10px;
+  }
+
+  .paymentsTabBody .cardInner {
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .paymentEntryCard {
+    padding: 12px 12px 14px;
+    display: grid;
+    gap: 4px;
+  }
+
+  .paymentsTabBody .paymentHistoryCard {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .paymentEntryTitle {
+    font-size: 14px;
+    line-height: 1.14;
+    letter-spacing: -0.01em;
+    margin-bottom: 2px;
+  }
+
+  .paymentEntryHint {
+    font-size: 10.5px;
+    line-height: 1.32;
+    margin-bottom: 2px;
+  }
+
+  .paymentEntryGrid {
+    margin-top: 8px;
+    gap: 10px;
+  }
+
+  .paymentsTabBody .field label {
+    font-size: 10.5px;
+  }
+
+  .paymentsTabBody .input,
+  .paymentsTabBody .select,
+  .paymentsTabBody .textarea {
+    min-height: 38px;
+    font-size: 13px;
+  }
+
+  .paymentEntrySubmitBtn {
+    min-height: 35px;
+    font-size: 12px;
+    position: sticky;
+    bottom: max(6px, env(safe-area-inset-bottom));
+    z-index: 2;
+  }
+
+  .paymentEntryCancelBtn {
+    min-height: 32px;
+    font-size: 11px;
+  }
+
+  .paymentHistoryTitle {
+    font-size: 14px;
+  }
+
+  .paymentHistoryWrap {
+    margin-top: 6px;
+    padding-inline: 0;
+    overflow-x: visible;
+  }
+
+  .paymentHistoryTable {
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .paymentHistoryTable thead {
+    display: none;
+  }
+
+  .paymentHistoryTable tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  .paymentHistoryTable tbody tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "date amount"
+      "status actions";
+    gap: 6px 10px;
+    border: 1px solid rgba(98, 124, 170, 0.24);
+    border-radius: 12px;
+    background: rgba(14, 25, 44, 0.34);
+    padding: 8px 10px;
+  }
+
+  .paymentHistoryTable tbody tr:nth-child(even) {
+    background: rgba(14, 25, 44, 0.34);
+  }
+
+  .paymentHistoryTable tbody tr td {
+    padding: 0 !important;
+    border-bottom: 0;
+    background: transparent;
+    min-width: 0;
+  }
+
+  .paymentHistoryTable tbody tr td.paymentDateCol {
+    grid-area: date;
+    font-size: 10.5px;
+    line-height: 1.22;
+    color: #d4e1f7;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .paymentHistoryTable tbody tr td.amountCol {
+    grid-area: amount;
+    font-size: 11.5px;
+    line-height: 1.2;
+    font-weight: 600;
+    color: #edf4ff;
+    white-space: nowrap;
+  }
+
+  .paymentHistoryTable tbody tr td.paymentStatusCol {
+    grid-area: status;
+    font-size: 9.5px;
+    line-height: 1.28;
+    color: #9db2d7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .paymentHistoryTable tbody tr td.paymentActionsCol {
+    grid-area: actions;
+    justify-self: end;
+    align-self: center;
+    text-align: right;
+  }
+
+  .paymentRowActions {
+    gap: 3px;
+  }
+
+  .paymentRowActionsDesktop {
+    display: none;
+  }
+
+  .paymentHistoryTable tbody tr.isActionable {
+    cursor: pointer;
+    transition:
+      border-color 160ms ease,
+      background-color 160ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .paymentHistoryTable tbody tr.isActionable:active {
+    border-color: rgba(121, 158, 226, 0.44);
+    background: rgba(18, 33, 58, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(128, 165, 232, 0.2);
+  }
+
+  .paymentActionsSheetBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 85;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: rgba(3, 8, 20, 0.5);
+    backdrop-filter: blur(1px);
+  }
+
+  .paymentActionsSheet {
+    display: grid;
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 86;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(118, 146, 193, 0.36);
+    background: linear-gradient(180deg, rgba(20, 34, 56, 0.98), rgba(15, 27, 45, 0.99));
+    box-shadow: 0 16px 32px rgba(3, 8, 18, 0.5);
+  }
+
+  .paymentActionsSheetBtn {
+    width: 100%;
+    min-height: 38px;
+    justify-content: center;
+    font-size: 12px;
+  }
+
+  .paymentRowActions .btn.small {
+    min-height: 21px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 9px;
+    border-color: rgba(107, 132, 177, 0.28);
+    background: rgba(18, 30, 52, 0.5);
+    color: #c8d8f1;
+  }
+
+  .paymentRowActions .btn.small.danger {
+    border-color: rgba(239, 116, 137, 0.42);
+    background: rgba(103, 31, 47, 0.34);
+    color: #ffd8de;
+  }
+
+  .paymentAutoTag {
+    font-size: 9px;
+    color: #7a8cad;
+    font-weight: 500;
+    letter-spacing: 0.01em;
   }
 
   .modalFooter {
@@ -5666,16 +6535,27 @@ h1,h2,h3 { margin: 0; }
   }
 
   .app.compactMode .billsFiltersRow {
-    grid-template-columns: 36px minmax(0, 1fr);
     gap: 6px;
-    padding: 3px;
-    border-radius: 11px;
+    padding: 4px 5px;
+    border-radius: 12px;
+  }
+
+  .app.compactMode .mobileSearchMorph {
+    --search-btn-size: 30px;
+    width: var(--search-btn-size);
+    min-width: var(--search-btn-size);
+    height: var(--search-btn-size);
+  }
+
+  .app.compactMode .mobileSearchMorph.open {
+    width: 100%;
   }
 
   .app.compactMode .searchToggleBtn {
-    width: 36px;
-    height: 36px;
-    min-height: 36px;
+    width: 30px;
+    height: 30px;
+    min-height: 30px;
+    flex-basis: 30px;
   }
 
   .app.compactMode .searchToggleBtn svg {
@@ -5684,13 +6564,13 @@ h1,h2,h3 { margin: 0; }
   }
 
   .app.compactMode .quickFilterChips {
-    gap: 5px;
-    margin-left: 4px;
+    gap: 4px;
+    margin-left: 0;
   }
 
   .app.compactMode .quickFilterChip {
-    min-height: 30px;
-    padding: 0 10px;
+    min-height: 28px;
+    padding: 0 9px;
     font-size: 10.5px;
   }
 
@@ -5776,6 +6656,8 @@ h1,h2,h3 { margin: 0; }
 @media (max-width: 700px) {
   .tableWrap.billsTableWrap {
     overflow-x: hidden;
+    padding-left: 8px;
+    padding-right: 8px;
   }
 
   .billsTable,
@@ -5798,19 +6680,20 @@ h1,h2,h3 { margin: 0; }
 
   .billsTable th,
   .billsTable td {
-    padding: 10px 7px !important;
+    padding: 8px 8px !important;
   }
 
   .billsTable th:first-child,
   .billsTable td:first-child {
-    width: 58%;
+    width: 60%;
     min-width: 0;
+    padding-left: 10px !important;
     padding-right: 10px !important;
   }
 
   .billsTable th:nth-child(3),
   .billsTable td:nth-child(3) {
-    width: 27%;
+    width: 24%;
     padding-left: 8px !important;
   }
 
@@ -5818,8 +6701,8 @@ h1,h2,h3 { margin: 0; }
   .billsTable td:last-child {
     width: 15%;
     min-width: 54px;
-    padding-left: 4px !important;
-    padding-right: 4px !important;
+    padding-left: 6px !important;
+    padding-right: 10px !important;
   }
 
   .actionsHeaderCell {
@@ -5863,17 +6746,14 @@ h1,h2,h3 { margin: 0; }
     gap: 6px;
   }
 
-  .billMetaLine {
-    gap: 6px;
-    align-items: center;
-    margin-top: 1px;
+  .billName .bold {
+    font-size: 15px;
+    line-height: 1.18;
+    letter-spacing: -0.01em;
   }
 
-  .billMetaLine > span {
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .billMetaLine {
+    display: none;
   }
 
   .billExpandHint {
@@ -5885,84 +6765,154 @@ h1,h2,h3 { margin: 0; }
     white-space: normal;
   }
 
+  .billExtra {
+    display: none;
+  }
+
   .billMobileMeta {
-    display: block;
-    margin-top: 2px;
-    color: #7f91b4;
+    margin-top: 3px;
+    color: #8ea3c8;
     font-size: 10px;
-    line-height: 1.2;
+    line-height: 1.25;
     display: grid;
     gap: 2px;
+  }
+
+  .billMobileSubline {
+    display: none;
+  }
+
+  .billMobileContext {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #8ca3cb;
+  }
+
+  .billMobilePlanPill {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 1px 6px;
+    border: 1px solid rgba(113, 139, 185, 0.34);
+    background: rgba(36, 55, 89, 0.34);
+    color: #aec3e5;
+    font-size: 9.5px;
+    line-height: 1.2;
+    font-weight: 600;
   }
 
   .billMobileMetaPrimary {
     display: flex;
     align-items: center;
-    gap: 4px;
+    justify-content: flex-start;
+    gap: 6px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .billMobileCategory {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #8fa3c8;
-  }
-
-  .billMetaDivider {
-    color: #60749b;
-    flex-shrink: 0;
   }
 
   .billMobileAmount {
-    color: #7ed9b0;
-    font-weight: 700;
+    color: #e8f0ff;
+    font-weight: 500;
     flex-shrink: 0;
+    font-size: 11px;
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
   }
 
-  .billMobileStatus {
-    flex-shrink: 0;
-    font-weight: 700;
+  .billMobileAmount-overdue {
+    color: #efb0bc;
   }
 
-  .billMobileStatus-overdue {
-    color: #ff8fa1;
+  .billMobileAmount-dueSoon {
+    color: #e6c58f;
   }
 
-  .billMobileStatus-dueSoon {
-    color: #ffd48a;
+  .billMobileAmount-paid {
+    color: #9ecfb5;
   }
 
-  .billMobileStatus-paid {
-    color: #7ed9b0;
+  .billMobileAmount-upcoming {
+    color: #d2def4;
   }
 
-  .billMobileStatus-upcoming {
-    color: #a9bde2;
+  .billMobileAmount-partial {
+    color: #b3cfee;
   }
 
-  .billMobileStatus-partial {
-    color: #9ecbff;
+  .billMobileAmount-archived {
+    color: #adb6c9;
   }
 
-  .billMobileStatus-archived {
-    color: #b6bfd2;
-  }
-
-  .billMobileMetaSecondary {
-    color: #93a5c8;
-    font-size: 9.5px;
+  .billMobileRevealMeta {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .billMobileRevealStatus {
+    font-size: 10.5px;
+    line-height: 1.2;
+    font-weight: 700;
+  }
+
+  .billMobileRevealDue {
+    font-size: 10.5px;
+    line-height: 1.2;
+    font-weight: 600;
+  }
+
+  .billMetaDivider {
+    color: #6f86ad;
+    flex-shrink: 0;
+  }
+
+  .billMobileStatus-overdue {
+    color: #ffb6c2;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .billMobileStatus-dueSoon {
+    color: #ffdca1;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .billMobileStatus-paid {
+    color: #99e7be;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .billMobileStatus-upcoming {
+    color: #bfd0ee;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .billMobileStatus-partial {
+    color: #b7dcff;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .billMobileStatus-archived {
+    color: #c4cada;
+    border-color: transparent;
+    background: transparent;
   }
 
   .dueCell {
     display: grid;
-    gap: 1px;
+    gap: 2px;
     align-items: start;
+    justify-items: start;
     white-space: normal;
   }
 
@@ -5977,14 +6927,86 @@ h1,h2,h3 { margin: 0; }
     white-space: nowrap;
   }
 
+  .dueMobileTapTrigger {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+
+  .dueMobileTapTrigger svg {
+    width: 11px;
+    height: 11px;
+    display: block;
+    color: #8fa6cc;
+    transform: rotate(180deg);
+    transition: transform 160ms ease, color 160ms ease;
+  }
+
+  .dueMobileTapTrigger.open svg {
+    transform: rotate(0deg);
+    color: #c7d9f7;
+  }
+
   .dueMobileText {
     font-weight: 600;
     font-size: 13px;
   }
 
   .dueMobileDelta {
+    width: auto;
+    display: block;
+    border-radius: 0;
+    border: 0;
+    background: transparent;
+    color: #a9bddf;
+    padding: 0;
     font-size: 11px;
-    color: #95a7ca;
+    line-height: 1.25;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .dueMobileDelta-overdue {
+    color: #ffb6c2;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .dueMobileDelta-dueSoon {
+    color: #ffdca1;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .dueMobileDelta-paid {
+    color: #9be8c0;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .dueMobileDelta-partial {
+    color: #b7dcff;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .dueMobileDelta-upcoming {
+    color: #bfd0ee;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .dueMobileDelta-archived {
+    color: #c4cada;
+    border-color: transparent;
+    background: transparent;
   }
 
   .statusBadge {
@@ -6877,5 +7899,1257 @@ h1,h2,h3 { margin: 0; }
 
 .calendarSelectedPanel .calendarDueItem .calendarDueMeta {
   color: #a8b8d5;
+}
+
+/* Calendar compact restore (earlier approved version) */
+.modal.modal-lg.calendarModal {
+  width: min(1080px, calc(100vw - 20px));
+  max-width: min(1080px, calc(100vw - 20px));
+  height: min(780px, calc(100dvh - 12px));
+  max-height: min(780px, calc(100dvh - 12px));
+  display: flex;
+  flex-direction: column;
+}
+
+.calendarModalCloseBtn {
+  position: static;
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-color: transparent;
+  background: rgba(14, 27, 48, 0.4);
+  color: #b8c9e6;
+}
+
+.calendarModalCloseBtn:hover {
+  border-color: rgba(255, 94, 120, 0.85);
+  background: rgba(14, 27, 48, 0.4);
+  color: #b8c9e6;
+}
+
+.calendarModalHeader {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 8px;
+  border-bottom-color: rgba(91, 122, 175, 0.3);
+  background:
+    radial-gradient(circle at 12% -120%, rgba(86, 130, 221, 0.18), transparent 56%),
+    linear-gradient(90deg, rgba(24, 43, 73, 0.38), rgba(14, 29, 52, 0.18));
+}
+
+.calendarModalHeaderMain {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.calendarModalHeaderIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(126, 154, 203, 0.42);
+  background: linear-gradient(180deg, rgba(38, 61, 98, 0.82), rgba(25, 42, 71, 0.78));
+  color: #c7d6f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calendarModalHeaderIcon svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.calendarModalHeaderText {
+  min-width: 0;
+}
+
+.calendarModalHeaderText h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-weight: 500;
+}
+
+.calendarModalHeaderText p.muted {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #94a8cb;
+}
+
+.calendarModalBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: hidden;
+  overflow-x: hidden;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  padding: 4px 12px 12px;
+}
+
+.calendarModalBody::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.calendarCard.isCompact.isContained {
+  margin: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.calendarCard.isCompact.isContained .calendarStudioLayout.isStudioCompact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 388px;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+
+.calendarCard.isCompact.isContained .calendarStudioMain {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-inline: 8px 10px;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbar {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 8px;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarMain {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarHeaderActions {
+  width: auto;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarActions {
+  flex: 0 0 auto;
+  margin-right: 8px;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarHeaderActions .btn {
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  border-color: rgba(129, 151, 188, 0.32);
+  background: rgba(40, 57, 85, 0.2);
+  color: #bccadc;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarHeaderActions .btn:hover {
+  border-color: rgba(149, 171, 207, 0.44);
+  background: rgba(50, 69, 102, 0.28);
+  color: #d4e0f3;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarActionLabel {
+  display: none;
+}
+
+.calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarActionIcon {
+  width: 12px;
+  height: 12px;
+  display: block;
+  opacity: 0.8;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  position: relative;
+  z-index: 9;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineDropdown {
+  position: relative;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineTrigger {
+  border: 0;
+  background: transparent;
+  color: #d3dceb;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.05;
+  letter-spacing: 0.018em;
+  font-weight: 500;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineTrigger:hover {
+  color: #dee8f9;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineTrigger:focus-visible {
+  outline: 0;
+  box-shadow: 0 2px 0 0 rgba(144, 181, 243, 0.45);
+}
+
+.calendarCard.isCompact.isContained .calendarInlineTriggerYear {
+  min-width: 4ch;
+  justify-content: flex-start;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineCaret {
+  width: 11px;
+  height: 11px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.56;
+  transition: transform 0.15s ease;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineDropdown.isOpen .calendarInlineCaret {
+  transform: rotate(180deg);
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  min-width: 168px;
+  max-height: min(272px, 52vh);
+  overflow: auto;
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(122, 146, 190, 0.44);
+  background:
+    radial-gradient(circle at top left, rgba(83, 128, 224, 0.16), transparent 52%),
+    linear-gradient(180deg, rgba(12, 23, 42, 0.98), rgba(9, 18, 34, 0.98));
+  box-shadow: 0 14px 28px rgba(2, 8, 20, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+  z-index: 15;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu:hover,
+.calendarCard.isCompact.isContained .calendarInlineMenu:focus-within {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(123, 154, 214, 0.72) transparent;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu:hover::-webkit-scrollbar,
+.calendarCard.isCompact.isContained .calendarInlineMenu:focus-within::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  background: linear-gradient(180deg, rgba(149, 180, 238, 0.72), rgba(103, 136, 198, 0.78));
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(171, 198, 247, 0.86), rgba(118, 149, 210, 0.9));
+}
+
+.calendarCard.isCompact.isContained .calendarInlineMenu::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineDropdown.isYear .calendarInlineMenu {
+  min-width: 92px;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineDropdown.isOpen .calendarInlineMenu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineOption {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #ccdbf5;
+  font-size: 13px;
+  line-height: 1.15;
+  font-weight: 500;
+  text-align: left;
+  padding: 8px 9px;
+  cursor: pointer;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineOption:hover {
+  background: rgba(93, 134, 214, 0.22);
+  color: #eaf3ff;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineOption.isActive {
+  background: rgba(91, 140, 255, 0.54);
+  color: #f4f8ff;
+  font-weight: 600;
+}
+
+.calendarCard.isCompact.isContained .calendarInlineDropdown.isYear .calendarInlineOption {
+  text-align: center;
+}
+
+.calendarCard.isCompact.isContained .calendarGridWrap {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+}
+
+.calendarCard.isCompact.isContained .calendarWeekdays {
+  background: transparent;
+  border-bottom: 0;
+  padding: 0 6px 4px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.calendarCard.isCompact.isContained .calendarWeekdays span {
+  padding: 8px 6px;
+  font-size: 11px;
+  text-transform: none;
+  color: #8ea3ca;
+}
+
+.calendarCard.isCompact.isContained .calendarGrid {
+  gap: 4px;
+  padding: 0 4px 4px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.calendarCard.isCompact.isContained .calendarDayBtn {
+  aspect-ratio: 1 / 1;
+  min-height: 0;
+  padding: 5px;
+  border: 1px solid rgba(125, 150, 194, 0.34);
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(66, 89, 123, 0.62), rgba(54, 76, 108, 0.58));
+}
+
+.calendarCard.isCompact.isContained .calendarDayBtn:nth-child(7n),
+.calendarCard.isCompact.isContained .calendarDayBtn:nth-child(n + 36) {
+  border-right: 1px solid rgba(125, 150, 194, 0.34);
+  border-bottom: 1px solid rgba(125, 150, 194, 0.34);
+}
+
+.calendarCard.isCompact.isContained .calendarDayBtn:hover {
+  border-color: rgba(144, 171, 215, 0.5);
+  background:
+    linear-gradient(180deg, rgba(75, 104, 145, 0.66), rgba(60, 88, 126, 0.62));
+}
+
+.calendarCard.isCompact.isContained .calendarDayBtn.isOutMonth {
+  background:
+    linear-gradient(180deg, rgba(35, 50, 74, 0.44), rgba(28, 43, 64, 0.42));
+  color: #6f85ab;
+  border-color: rgba(103, 126, 165, 0.24);
+}
+
+.calendarCard.isCompact.isContained .calendarDayBtn.isSelected {
+  border-color: rgba(167, 210, 255, 0.86);
+  background:
+    linear-gradient(180deg, rgba(82, 112, 156, 0.74), rgba(64, 93, 136, 0.68));
+  box-shadow:
+    inset 0 0 0 1px rgba(152, 197, 255, 0.48),
+    0 0 0 1px rgba(129, 177, 238, 0.24),
+    0 8px 16px rgba(22, 46, 82, 0.34);
+}
+
+.calendarCard.isCompact.isContained .calendarDayBtn.isSelected .calendarDayNum {
+  font-weight: 600;
+  color: #f2f7ff;
+}
+
+.calendarCard.isCompact.isContained .calendarDayNum {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.calendarDayItems {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  align-content: end;
+  overflow: hidden;
+}
+
+.calendarDayItem {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: #9db2d7;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.calendarDayItemText {
+  display: block;
+  min-width: 0;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendarDayItemBar {
+  width: 3px;
+  height: 8px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  background: #7ea0d6;
+}
+
+.calendarDayItemBar.calendarTone-overdue {
+  background: #ff5a74;
+}
+
+.calendarDayItemBar.calendarTone-dueToday {
+  background: #ff8f2a;
+}
+
+.calendarDayItemBar.calendarTone-dueSoon {
+  background: #f0c84b;
+}
+
+.calendarDayItemBar.calendarTone-partial {
+  background: #8b84ff;
+}
+
+.calendarDayItemBar.calendarTone-upcoming {
+  background: #8fb8ff;
+}
+
+.calendarDayItemBar.calendarTone-paid {
+  background: #3fcd8d;
+}
+
+.calendarDayItemBar.calendarTone-archived {
+  background: #8c96a8;
+}
+
+.calendarDayItemMore {
+  font-size: 9px;
+  color: #8ca4cd;
+  padding-left: 6px;
+}
+
+.calendarCard.isCompact.isContained .calendarDayItems {
+  gap: 3px;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.calendarCard.isCompact.isContained .calendarDayItem {
+  font-size: 9px;
+  line-height: 1.2;
+  color: #95abcf;
+}
+
+.calendarCard.isCompact.isContained .calendarMobileDayActions {
+  display: none;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleRail {
+  border-left: 1px solid rgba(118, 143, 190, 0.24);
+  background: linear-gradient(180deg, rgba(16, 30, 51, 0.9), rgba(14, 26, 45, 0.96));
+  padding: 12px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleHead,
+.calendarCard.isCompact.isContained .calendarScheduleSummary {
+  flex-shrink: 0;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleHead {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleHeadActions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleSummary {
+  min-width: 0;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleHead strong {
+  display: block;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  color: #eef4ff;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleQuickAdd {
+  border: 1px solid rgba(122, 151, 205, 0.34);
+  border-radius: 999px;
+  background: rgba(18, 34, 58, 0.6);
+  color: #d5e4fb;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleQuickAdd svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleQuickAdd:hover {
+  border-color: rgba(157, 187, 239, 0.62);
+  background: rgba(28, 49, 82, 0.72);
+  color: #eef6ff;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToggle {
+  display: none;
+  justify-content: center;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #d4e2f8;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToggle:hover {
+  background: transparent;
+  color: #edf4ff;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToggleIcon {
+  width: 14px;
+  height: 14px;
+  transform: rotate(180deg);
+  transition: transform 0.18s ease;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToggle[aria-expanded="true"] .calendarScheduleToggleIcon {
+  transform: rotate(0deg);
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleHead p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #9ab0d6;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleSummaryItem {
+  border: 1px solid rgba(117, 142, 187, 0.18);
+  border-radius: 10px;
+  background: rgba(20, 34, 56, 0.68);
+  padding: 7px 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleSummaryItem span {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #89a0c8;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleSummaryItem strong {
+  font-size: 12px;
+  line-height: 1.2;
+  color: #f1f7ff;
+  overflow-wrap: anywhere;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleList {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
+  gap: 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(123, 154, 214, 0.72) transparent;
+  scrollbar-gutter: stable both-edges;
+  padding-inline: 2px;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleList::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleList::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background: linear-gradient(180deg, rgba(149, 180, 238, 0.78), rgba(103, 136, 198, 0.82));
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleList::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(171, 198, 247, 0.86), rgba(118, 149, 210, 0.9));
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleList::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleEmpty {
+  margin: 0;
+  border: 1px dashed rgba(119, 144, 189, 0.36);
+  border-radius: 12px;
+  padding: 12px;
+  color: #97add4;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleItem {
+  width: 100%;
+  border: 1px solid rgba(118, 143, 188, 0.2);
+  border-radius: 14px;
+  background: rgba(14, 27, 46, 0.9);
+  color: #d8e7ff;
+  text-align: left;
+  padding: 10px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleItem:hover {
+  border-color: rgba(146, 173, 221, 0.4);
+  background: rgba(20, 36, 60, 0.96);
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleItem.isActive {
+  border-color: rgba(155, 194, 251, 0.76);
+  box-shadow: 0 0 0 1px rgba(155, 194, 251, 0.38) inset;
+  background: linear-gradient(160deg, rgba(34, 64, 104, 0.9), rgba(19, 37, 62, 0.96));
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToneBar {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #7ea0d6;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToneBar.calendarTone-overdue {
+  background: #ff5a74;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToneBar.calendarTone-dueToday {
+  background: #ff8f2a;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToneBar.calendarTone-dueSoon {
+  background: #f0c84b;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToneBar.calendarTone-partial {
+  background: #8b84ff;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleToneBar.calendarTone-paid {
+  background: #3fcd8d;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleItemTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8da6cf;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleTitle {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #f4f9ff;
+}
+
+.calendarCard.isCompact.isContained .calendarScheduleMeta,
+.calendarCard.isCompact.isContained .calendarScheduleAmount {
+  margin: 0;
+  font-size: 11px;
+  color: #c6d8f7;
+}
+
+@media (max-width: 1120px) {
+  .modal.modal-lg.calendarModal {
+    width: min(920px, calc(100vw - 14px));
+    max-width: min(920px, calc(100vw - 14px));
+    height: min(780px, calc(100dvh - 10px));
+    max-height: min(780px, calc(100dvh - 10px));
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineTrigger {
+    font-size: 15px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarStudioLayout.isStudioCompact {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .calendarCard.isCompact.isContained .calendarStudioMain {
+    padding-inline: 6px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarGrid {
+    gap: 6px;
+    padding: 0 6px 6px;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .calendarCard.isCompact.isContained .calendarWeekdays {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayBtn {
+    aspect-ratio: 1 / 1;
+    min-height: 0;
+    border-radius: 12px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayNum {
+    font-size: 12px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItem {
+    font-size: 9px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleRail {
+    border-left: 0;
+    border-top: 1px solid rgba(118, 143, 190, 0.24);
+    padding: 10px 14px 12px;
+    max-height: min(360px, 46dvh);
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .modal.modal-lg.calendarModal {
+    width: calc(100vw - 10px);
+    max-width: calc(100vw - 10px);
+  }
+
+  .calendarModalHeader {
+    padding: 10px 10px 8px;
+  }
+
+  .calendarModalHeaderIcon {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+  }
+
+  .calendarModalHeaderText h3 {
+    font-size: 13px;
+  }
+
+  .calendarModalHeaderText p.muted {
+    margin-top: 1px;
+    font-size: 10px;
+  }
+
+  .calendarModalBody {
+    padding: 6px 8px 8px;
+  }
+
+  .calendarCard.isCompact.isContained {
+    padding: 0;
+  }
+
+  .calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarHeaderActions .btn {
+    width: 28px;
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarCompactToolbarActions {
+    margin-right: 4px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineHeader {
+    gap: 12px;
+    max-width: calc(100vw - 126px);
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineTrigger {
+    font-size: 14px;
+    gap: 5px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineCaret {
+    width: 9px;
+    height: 9px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineMenu {
+    min-width: 150px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineDropdown.isYear .calendarInlineMenu {
+    min-width: 84px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarGrid,
+  .calendarCard.isCompact.isContained .calendarWeekdays {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .calendarCard.isCompact.isContained .calendarGridWrap {
+    touch-action: pan-y;
+  }
+
+  .calendarCard.isCompact.isContained .calendarStudioMain {
+    position: relative;
+    padding-inline: 4px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .calendarCard.isCompact.isContained .calendarStudioMain::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayBtn {
+    aspect-ratio: 1 / 1;
+    min-height: 0;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayNum {
+    font-size: 12px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItem {
+    font-size: 8px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItems {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    align-content: flex-end;
+    gap: 4px;
+    min-height: 10px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItem {
+    width: auto;
+    min-width: 0;
+    gap: 0;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItemText {
+    display: none;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItemBar {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActions {
+    position: absolute;
+    inset: 0;
+    z-index: 22;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    padding: 10px;
+    background: rgba(5, 10, 20, 0.48);
+    backdrop-filter: blur(2px);
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayCard {
+    width: min(330px, calc(100% - 6px));
+    border: 1px solid rgba(120, 151, 204, 0.34);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(27, 45, 74, 0.96), rgba(19, 33, 56, 0.98));
+    box-shadow:
+      0 20px 40px rgba(7, 14, 28, 0.58),
+      inset 0 1px 0 rgba(162, 193, 246, 0.1);
+    padding: 12px;
+    display: grid;
+    gap: 9px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayCardHead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionsDate {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: #f1f8ff;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionsHint {
+    margin: -2px 0 0;
+    font-size: 11px;
+    line-height: 1.25;
+    color: #9db3d8;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayCloseBtn {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    margin-left: auto;
+    background: rgba(15, 30, 51, 0.56);
+    color: #bdd1ee;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionsBtns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionBtn.btn.small {
+    min-height: 32px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    letter-spacing: 0.01em;
+    font-weight: 600;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionBtn.isPrimary {
+    border: 1px solid rgba(122, 177, 255, 0.7);
+    background: linear-gradient(180deg, rgba(73, 155, 255, 0.92), rgba(46, 127, 238, 0.94));
+    color: #f4f9ff;
+    box-shadow: 0 8px 18px rgba(23, 91, 186, 0.34);
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionBtn.isPrimary:hover {
+    background: linear-gradient(180deg, rgba(88, 168, 255, 0.95), rgba(58, 137, 244, 0.96));
+    border-color: rgba(153, 202, 255, 0.82);
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionBtn:not(.isPrimary) {
+    border: 1px solid rgba(117, 144, 191, 0.46);
+    background: rgba(17, 33, 56, 0.7);
+    color: #cfddf3;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayActionBtn:not(.isPrimary):hover {
+    border-color: rgba(142, 169, 214, 0.62);
+    background: rgba(24, 43, 71, 0.8);
+    color: #e4efff;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayInfo {
+    border-top: 1px solid rgba(106, 131, 173, 0.28);
+    padding-top: 9px;
+    max-height: min(190px, 30vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayInfo .muted.small {
+    margin: 0;
+    font-size: 11px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayInfoList {
+    display: grid;
+    gap: 6px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarMobileDayInfoItem {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    font-size: 12px;
+    color: #cfe0fb;
+    line-height: 1.25;
+    border: 1px solid rgba(103, 128, 171, 0.24);
+    border-radius: 10px;
+    background: rgba(16, 31, 53, 0.6);
+    padding: 7px 8px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleRail {
+    padding: 8px 12px 10px;
+    gap: 8px;
+    max-height: min(250px, 34dvh);
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleToggle {
+    display: inline-flex;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleRail.isMobileCollapsed {
+    max-height: none;
+    padding-bottom: 8px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleRail.isMobileCollapsed .calendarScheduleSummary,
+  .calendarCard.isCompact.isContained .calendarScheduleRail.isMobileCollapsed .calendarScheduleList {
+    display: none;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleHead {
+    min-height: 0;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleHead strong {
+    font-size: 16px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleHeadActions {
+    gap: 5px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleQuickAdd {
+    width: 22px;
+    height: 22px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleQuickAdd {
+    display: none;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleSummary {
+    gap: 6px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleSummaryItem {
+    padding: 6px 5px;
+    gap: 3px;
+    border-radius: 9px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleSummaryItem span {
+    font-size: 8px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleSummaryItem strong {
+    font-size: 11px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleList {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    max-height: 100%;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleItem {
+    padding: 8px;
+    border-radius: 12px;
+    gap: 5px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleToneBar {
+    height: 4px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleItemTop {
+    font-size: 9px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleTitle {
+    font-size: 13px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleAmount {
+    font-size: 10px;
+  }
+}
+
+.app.compactMode .modal.modal-lg.calendarModal {
+  width: min(1080px, calc(100vw - 8px));
+  max-width: min(1080px, calc(100vw - 8px));
+}
+
+@media (max-width: 420px) {
+  .calendarCard.isCompact.isContained .calendarInlineHeader {
+    max-width: calc(100vw - 112px);
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineTrigger {
+    font-size: 13px;
+    gap: 3px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineMenu {
+    min-width: 142px;
+    max-height: min(236px, 46vh);
+  }
+
+  .calendarCard.isCompact.isContained .calendarInlineDropdown.isYear .calendarInlineMenu {
+    min-width: 78px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarCompactToolbarActions .calendarHeaderActions .btn {
+    width: 26px;
+    min-width: 26px;
+    min-height: 26px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarGrid {
+    gap: 4px;
+    padding: 0 4px 4px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarWeekdays {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayBtn {
+    aspect-ratio: 1 / 1;
+    min-height: 0;
+    border-radius: 10px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayNum {
+    font-size: 11px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItem {
+    font-size: 8px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarDayItemBar {
+    height: 7px;
+  }
+
+  .calendarCard.isCompact.isContained .calendarScheduleList {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 

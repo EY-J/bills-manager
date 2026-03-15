@@ -292,7 +292,7 @@ export default function SettingsDialog({
             </div>
             <p className="muted">Manage notifications, backup, and app actions.</p>
           </div>
-          <button className="iconBtn" onClick={onClose} aria-label="Close settings">
+          <button className="iconBtn modalCloseBtn" onClick={onClose} aria-label="Close settings">
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M4 4l8 8M12 4l-8 8" />
             </svg>

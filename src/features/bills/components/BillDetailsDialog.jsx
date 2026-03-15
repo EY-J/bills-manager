@@ -55,10 +55,21 @@ function dueDateLabel(bill) {
   return bill?.meta?.hasDueDate ? `Due ${formatShortDate(bill.dueDate)}` : "No due date";
 }
 
+function normalizeDetailsTab(value) {
+  if (value === "payments" || value === "notes") return value;
+  return "overview";
+}
+
+function isMobileViewport() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(max-width: 700px)").matches;
+}
+
 export default function BillDetailsDialog({
   open,
   onClose,
   bill,
+  initialTab = "overview",
   onEdit,
   onMarkPaid,
   markPaidLoading = false,
@@ -81,11 +92,12 @@ export default function BillDetailsDialog({
     [bill]
   );
 
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(() => normalizeDetailsTab(initialTab));
   const [paymentDraft, setPaymentDraft] = useState(() =>
     buildPaymentDraft(bill)
   );
   const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [paymentActionsOpenId, setPaymentActionsOpenId] = useState(null);
   const [notesDraft, setNotesDraft] = useState(bill?.notes || "");
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const actionsMenuRef = React.useRef(null);
@@ -96,6 +108,10 @@ export default function BillDetailsDialog({
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
+      if (paymentActionsOpenId) {
+        setPaymentActionsOpenId(null);
+        return;
+      }
       if (actionsMenuOpen) {
         setActionsMenuOpen(false);
         return;
@@ -104,7 +120,7 @@ export default function BillDetailsDialog({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose, actionsMenuOpen]);
+  }, [open, onClose, actionsMenuOpen, paymentActionsOpenId]);
 
   useEffect(() => {
     if (!actionsMenuOpen) return;
@@ -117,7 +133,23 @@ export default function BillDetailsDialog({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [actionsMenuOpen]);
 
+  useEffect(() => {
+    if (!open) return;
+    setTab(normalizeDetailsTab(initialTab));
+  }, [open, bill?.id, initialTab]);
+
+  useEffect(() => {
+    if (open && tab === "payments") return;
+    setPaymentActionsOpenId(null);
+  }, [open, tab, bill?.id]);
+
   const paymentBusy = paymentSubmitLoading || Boolean(paymentDeletingId);
+  const activePaymentAction = useMemo(
+    () =>
+      (bill?.payments || []).find((payment) => payment.id === paymentActionsOpenId) ||
+      null,
+    [bill?.payments, paymentActionsOpenId]
+  );
 
   async function handlePaymentSubmit() {
     if (paymentSubmitLoading) return;
@@ -172,22 +204,26 @@ export default function BillDetailsDialog({
         key={bill?.id || "none"}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="modalHeader">
-          <div className="truncate">
-            <h3 className="truncate">{bill?.name || "Bill Details"}</h3>
+        <div className="modalHeader billDetailsHeader">
+          <div className="billDetailsHeaderMain">
+            <h3 className="truncate billDetailsTitle" title={bill?.name || "Bill Details"}>
+              {bill?.name || "Bill Details"}
+            </h3>
             {bill ? (
               <p className="billHeaderMeta">
                 <span className="billHeaderMetaItem">{bill.category || "-"}</span>
-                <span className="billHeaderMetaSep">|</span>
+                <span className="billHeaderMetaSep" aria-hidden="true" />
                 <span className="billHeaderMetaItem">{formatCadenceLabel(bill.cadence)}</span>
-                <span className="billHeaderMetaSep">|</span>
-                <span className="billHeaderMetaItem">{dueDateLabel({ ...bill, meta })}</span>
-                <span className="billHeaderMetaSep">|</span>
+                <span className="billHeaderMetaSep" aria-hidden="true" />
+                <span className="billHeaderMetaItem billHeaderMetaDue">
+                  {dueDateLabel({ ...bill, meta })}
+                </span>
+                <span className="billHeaderMetaSep" aria-hidden="true" />
                 <span className="billHeaderMetaAmount">{formatMoney(bill.amount)}</span>
               </p>
             ) : null}
           </div>
-          <button className="iconBtn" onClick={onClose} aria-label="Close">
+          <button className="iconBtn modalCloseBtn" onClick={onClose} aria-label="Close">
             <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M4 4l8 8M12 4l-8 8" />
             </svg>
@@ -278,123 +314,114 @@ export default function BillDetailsDialog({
                   </div>
                 ) : null}
 
-                <div className="rowGap billOverviewFoot">
-                  <div className="muted billOverviewHint">
-                    {bill.cadence === "statement-plan"
-                      ? "Mark paid applies to the current statement. Full payment moves to next statement amount."
-                      : bill.cadence === "one-time"
-                      ? "Mark paid adds a payment and closes this one-time bill when the full amount is covered."
-                      : "Mark paid adds a payment and advances the due date to the next cycle. If a plan is set, paid months also increases."}
-                  </div>
-                  <div className="actions billOverviewActions">
+                <div className="actions billOverviewActions">
+                  <button
+                    className="btn primary"
+                    disabled={bill.archived || markPaidLoading}
+                    onClick={onMarkPaid}
+                  >
+                    {markPaidLoading ? "Marking..." : "Mark paid"}
+                  </button>
+                  <button className="btn billOverviewSecondaryBtn" onClick={onEdit}>
+                    Edit
+                  </button>
+
+                  <div className="billActionsMoreWrap" ref={actionsMenuRef}>
                     <button
-                      className="btn primary"
-                      disabled={bill.archived || markPaidLoading}
-                      onClick={onMarkPaid}
+                      className="btn billActionsMoreBtn billOverviewMoreBtn"
+                      onClick={() => setActionsMenuOpen((v) => !v)}
+                      aria-expanded={actionsMenuOpen}
+                      aria-haspopup="menu"
                     >
-                      {markPaidLoading ? "Marking..." : "Mark paid"}
-                    </button>
-                    <button className="btn" onClick={onEdit}>
-                      Edit
+                      More
                     </button>
 
-                    <div className="billActionsMoreWrap" ref={actionsMenuRef}>
-                      <button
-                        className="btn billActionsMoreBtn"
-                        onClick={() => setActionsMenuOpen((v) => !v)}
-                        aria-expanded={actionsMenuOpen}
-                        aria-haspopup="menu"
-                      >
-                        More
-                      </button>
-
-                      {actionsMenuOpen ? (
-                        <>
+                    {actionsMenuOpen ? (
+                      <>
+                        <button
+                          type="button"
+                          className="billActionsMenuBackdrop"
+                          aria-label="Close more actions"
+                          onClick={() => setActionsMenuOpen(false)}
+                        />
+                        <div className="billActionsMenu" role="menu" aria-label="More actions">
                           <button
-                            type="button"
-                            className="billActionsMenuBackdrop"
-                            aria-label="Close more actions"
-                            onClick={() => setActionsMenuOpen(false)}
-                          />
-                          <div className="billActionsMenu" role="menu" aria-label="More actions">
-                            <button
-                              className="btn billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onDuplicate?.();
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              Duplicate bill
-                            </button>
-                            <button
-                              className="btn billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onArchiveToggle?.(!bill.archived);
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              {bill.archived ? "Restore bill" : "Archive bill"}
-                            </button>
-                            {meta?.hasDueDate ? (
-                              <>
-                                <button
-                                  className="btn billActionsMenuItem"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    onSnoozeReminder?.("1d");
-                                    setActionsMenuOpen(false);
-                                  }}
-                                >
-                                  Snooze reminders 1 day
-                                </button>
-                                <button
-                                  className="btn billActionsMenuItem"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    onSnoozeReminder?.("3d");
-                                    setActionsMenuOpen(false);
-                                  }}
-                                >
-                                  Snooze reminders 3 days
-                                </button>
-                                <button
-                                  className="btn billActionsMenuItem"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    onSnoozeReminder?.("cycle");
-                                    setActionsMenuOpen(false);
-                                  }}
-                                >
-                                  Snooze this cycle
-                                </button>
-                                <button
-                                  className="btn billActionsMenuItem"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    onSnoozeReminder?.("clear");
-                                    setActionsMenuOpen(false);
-                                  }}
-                                >
-                                  Clear reminder snooze
-                                </button>
-                              </>
-                            ) : null}
-                            <button
-                              className="btn danger billActionsMenuItem"
-                              role="menuitem"
-                              onClick={() => {
-                                onDelete?.();
-                                setActionsMenuOpen(false);
-                              }}
-                            >
-                              Delete bill
-                            </button>
-                          </div>
-                        </>
-                      ) : null}
-                    </div>
+                            className="btn billActionsMenuItem"
+                            role="menuitem"
+                            onClick={() => {
+                              onDuplicate?.();
+                              setActionsMenuOpen(false);
+                            }}
+                          >
+                            Duplicate bill
+                          </button>
+                          <button
+                            className="btn billActionsMenuItem"
+                            role="menuitem"
+                            onClick={() => {
+                              onArchiveToggle?.(!bill.archived);
+                              setActionsMenuOpen(false);
+                            }}
+                          >
+                            {bill.archived ? "Restore bill" : "Archive bill"}
+                          </button>
+                          {meta?.hasDueDate ? (
+                            <>
+                              <button
+                                className="btn billActionsMenuItem"
+                                role="menuitem"
+                                onClick={() => {
+                                  onSnoozeReminder?.("1d");
+                                  setActionsMenuOpen(false);
+                                }}
+                              >
+                                Snooze reminders 1 day
+                              </button>
+                              <button
+                                className="btn billActionsMenuItem"
+                                role="menuitem"
+                                onClick={() => {
+                                  onSnoozeReminder?.("3d");
+                                  setActionsMenuOpen(false);
+                                }}
+                              >
+                                Snooze reminders 3 days
+                              </button>
+                              <button
+                                className="btn billActionsMenuItem"
+                                role="menuitem"
+                                onClick={() => {
+                                  onSnoozeReminder?.("cycle");
+                                  setActionsMenuOpen(false);
+                                }}
+                              >
+                                Snooze this cycle
+                              </button>
+                              <button
+                                className="btn billActionsMenuItem"
+                                role="menuitem"
+                                onClick={() => {
+                                  onSnoozeReminder?.("clear");
+                                  setActionsMenuOpen(false);
+                                }}
+                              >
+                                Clear reminder snooze
+                              </button>
+                            </>
+                          ) : null}
+                          <button
+                            className="btn danger billActionsMenuItem"
+                            role="menuitem"
+                            onClick={() => {
+                              onDelete?.();
+                              setActionsMenuOpen(false);
+                            }}
+                          >
+                            Delete bill
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -402,10 +429,10 @@ export default function BillDetailsDialog({
 
             {/* ---------------- Payments ---------------- */}
             {tab === "payments" ? (
-              <div className="modalBody">
-                <div className="cardInner">
-                  <div className="bold">Add payment</div>
-                  <div className="muted small">
+              <div className="modalBody paymentsTabBody">
+                <div className="cardInner paymentEntryCard">
+                  <div className="bold paymentEntryTitle">Add payment</div>
+                  <div className="muted small paymentEntryHint">
                     {bill.cadence === "statement-plan"
                       ? "Adds a payment record. Once statement amount is fully paid, due date moves to the next month's statement."
                       : bill.cadence === "one-time"
@@ -414,7 +441,7 @@ export default function BillDetailsDialog({
                   </div>
 
                   {/* âœ… Responsive grid to prevent overflow */}
-                  <div className="paymentGrid" style={{ marginTop: 10 }}>
+                  <div className="paymentGrid paymentEntryGrid">
                     <div className="field">
                       <label>Date</label>
 <input
@@ -444,7 +471,7 @@ export default function BillDetailsDialog({
                     </div>
 
                     <div className="field">
-                      <label>Status</label>
+                      <label>Note</label>
                       <input
                         className="input"
                         value={paymentDraft.note}
@@ -460,7 +487,7 @@ export default function BillDetailsDialog({
                     </div>
 
                     <button
-                      className="btn primary"
+                      className="btn primary paymentEntrySubmitBtn"
                       disabled={paymentBusy}
                       onClick={handlePaymentSubmit}
                     >
@@ -475,7 +502,7 @@ export default function BillDetailsDialog({
 
                     {editingPaymentId ? (
                       <button
-                        className="btn"
+                        className="btn paymentEntryCancelBtn"
                         disabled={paymentBusy}
                         onClick={() => {
                           setEditingPaymentId(null);
@@ -488,10 +515,10 @@ export default function BillDetailsDialog({
                   </div>
                 </div>
 
-                <div className="cardInner">
-                  <div className="bold">Payment history</div>
+                <div className="cardInner paymentHistoryCard">
+                  <div className="bold paymentHistoryTitle">Payment history</div>
 
-                  <div className="tableWrap" style={{ marginTop: 10 }}>
+                  <div className="tableWrap paymentHistoryWrap">
                     <table className="table paymentHistoryTable">
                       <thead>
                         <tr>
@@ -509,16 +536,42 @@ export default function BillDetailsDialog({
                             </td>
                           </tr>
                         ) : (
-                          bill.payments.map((p) => (
-                            <tr key={p.id}>
-                              <td>{formatShortDate(p.date)}</td>
+                          bill.payments.map((p) => {
+                            const canManagePayment =
+                              !p.autoSeedPaidMonths && p.note !== "Unpaid rollover";
+                            const rowActionableOnMobile =
+                              canManagePayment && isMobileViewport();
+
+                            return (
+                            <tr
+                              key={p.id}
+                              className={`paymentHistoryRow ${rowActionableOnMobile ? "isActionable" : ""}`}
+                              tabIndex={rowActionableOnMobile ? 0 : undefined}
+                              role={rowActionableOnMobile ? "button" : undefined}
+                              aria-label={
+                                rowActionableOnMobile
+                                  ? `Open actions for payment on ${formatShortDate(p.date)}`
+                                  : undefined
+                              }
+                              onClick={() => {
+                                if (!rowActionableOnMobile) return;
+                                setPaymentActionsOpenId(p.id);
+                              }}
+                              onKeyDown={(event) => {
+                                if (!rowActionableOnMobile) return;
+                                if (event.key !== "Enter" && event.key !== " ") return;
+                                event.preventDefault();
+                                setPaymentActionsOpenId(p.id);
+                              }}
+                            >
+                              <td className="paymentDateCol">{formatShortDate(p.date)}</td>
                               <td className="amountCol bold">
                                 {formatMoney(p.amount)}
                               </td>
-                              <td className="muted noteCol">{p.note || "-"}</td>
-                              <td className="right" onClick={(e) => e.stopPropagation()}>
-                                {!p.autoSeedPaidMonths && p.note !== "Unpaid rollover" ? (
-                                  <div className="paymentRowActions">
+                              <td className="muted noteCol paymentStatusCol">{p.note || "-"}</td>
+                              <td className="right paymentActionsCol" onClick={(e) => e.stopPropagation()}>
+                                {canManagePayment ? (
+                                  <div className="paymentRowActions paymentRowActionsDesktop">
                                     <button
                                       className="btn small"
                                       disabled={paymentBusy}
@@ -542,11 +595,12 @@ export default function BillDetailsDialog({
                                     </button>
                                   </div>
                                 ) : (
-                                  <span className="muted small">Auto</span>
+                                  <span className="paymentAutoTag muted small">Auto</span>
                                 )}
                               </td>
                             </tr>
-                          ))
+                          );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -586,6 +640,46 @@ export default function BillDetailsDialog({
                   </button>
                 </div>
               </div>
+            ) : null}
+
+            {paymentActionsOpenId && activePaymentAction ? (
+              <>
+                <button
+                  type="button"
+                  className="paymentActionsSheetBackdrop"
+                  aria-label="Close payment actions"
+                  onClick={() => setPaymentActionsOpenId(null)}
+                />
+                <div className="paymentActionsSheet" role="dialog" aria-label="Payment actions">
+                  <button
+                    className="btn paymentActionsSheetBtn"
+                    disabled={paymentBusy}
+                    onClick={() => {
+                      setEditingPaymentId(activePaymentAction.id);
+                      setPaymentDraft({
+                        date: activePaymentAction.date,
+                        amount: String(activePaymentAction.amount ?? 0),
+                        note: activePaymentAction.note || "",
+                      });
+                      setPaymentActionsOpenId(null);
+                    }}
+                  >
+                    Edit payment
+                  </button>
+                  <button
+                    className="btn danger paymentActionsSheetBtn"
+                    disabled={paymentBusy}
+                    onClick={() => {
+                      handleDeletePayment(activePaymentAction.id);
+                      setPaymentActionsOpenId(null);
+                    }}
+                  >
+                    {paymentDeletingId === activePaymentAction.id
+                      ? "Deleting..."
+                      : "Delete payment"}
+                  </button>
+                </div>
+              </>
             ) : null}
           </>
         )}

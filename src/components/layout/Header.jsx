@@ -1,7 +1,6 @@
 import React from "react";
 
 export default function Header({
-  onAdd,
   onOpenSettings,
   onOpenAccount,
   onOpenCalendar,
@@ -38,25 +37,7 @@ export default function Header({
           </div>
         </div>
 
-        <button
-          type="button"
-          className="mobileAddBtn"
-          aria-label="Add new bill"
-          data-testid="add-bill-quick-button"
-          onClick={onAdd}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 5v14" />
-            <path d="M5 12h14" />
-          </svg>
-        </button>
+        <div className="headerRightSpacer" aria-hidden="true" />
 
         <div className="headerActions">
           <button

@@ -1,7 +1,14 @@
 import React, { useEffect } from "react";
 import BillsCalendarCard from "./BillsCalendarCard.jsx";
 
-export default function CalendarDialog({ open, onClose, bills, onOpenBill }) {
+export default function CalendarDialog({
+  open,
+  onClose,
+  bills,
+  onOpenBill,
+  onAddBillAtDate,
+  onSelectDate,
+}) {
   useEffect(() => {
     if (!open) return undefined;
     function onKeyDown(event) {
@@ -21,15 +28,26 @@ export default function CalendarDialog({ open, onClose, bills, onOpenBill }) {
       <div
         className="modal modal-lg calendarModal"
         data-testid="calendar-dialog"
+        aria-label="Due Date Calendar"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="modalHeader">
-          <div>
-            <h3>Due Date Calendar</h3>
-            <p className="muted">View all bill due dates in one place.</p>
+        <div className="modalHeader calendarModalHeader">
+          <div className="calendarModalHeaderMain">
+            <span className="calendarModalHeaderIcon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" focusable="false">
+                <rect x="2.5" y="3.5" width="11" height="10" rx="2" />
+                <path d="M2.5 6.5h11" />
+                <path d="M5.25 2.5v2" />
+                <path d="M10.75 2.5v2" />
+              </svg>
+            </span>
+            <div className="calendarModalHeaderText">
+              <h3>Calendar</h3>
+              <p className="muted">Track monthly due dates at a glance.</p>
+            </div>
           </div>
           <button
-            className="iconBtn"
+            className="iconBtn modalCloseBtn calendarModalCloseBtn"
             data-testid="calendar-close-button"
             onClick={() => onClose?.()}
             aria-label="Close calendar"
@@ -46,6 +64,8 @@ export default function CalendarDialog({ open, onClose, bills, onOpenBill }) {
             contained
             showIntro={false}
             onOpenBill={(billId) => onOpenBill?.(billId)}
+            onAddBillAtDate={(isoDate) => onAddBillAtDate?.(isoDate)}
+            onSelectDate={(isoDate) => onSelectDate?.(isoDate)}
           />
         </div>
       </div>

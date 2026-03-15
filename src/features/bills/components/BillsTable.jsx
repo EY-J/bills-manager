@@ -145,6 +145,13 @@ export default function BillsTable({
               (b.notes || "").toLowerCase().includes(q.toLowerCase());
             const showDetails = expandedRowId === b.id || noteHit;
             const compactMetaParts = [formatCadenceLabel(b.cadence)];
+            const mobileContextParts = [formatCadenceLabel(b.cadence)];
+            if (b.category) mobileContextParts.push(b.category);
+            const mobilePlanMeta = plan.enabled
+              ? `${plan.monthsLeft} left`
+              : b.meta.monthsPending > 0
+                ? `${b.meta.monthsPending} pending`
+                : null;
             if (plan.enabled) compactMetaParts.push(`${plan.monthsLeft} left`);
             else if (b.meta.monthsPending > 0) {
               compactMetaParts.push(
@@ -194,18 +201,30 @@ export default function BillsTable({
                   </div>
 
                   <div className="muted small billMobileMeta">
+                    <div className="billMobileSubline">
+                      <span className="billMobileContext">{mobileContextParts.join(" | ")}</span>
+                      {mobilePlanMeta ? (
+                        <span className="billMobilePlanPill">{mobilePlanMeta}</span>
+                      ) : null}
+                    </div>
                     <div className="billMobileMetaPrimary">
-                      <span className="billMobileCategory">{b.category || "-"}</span>
-                      <span className="billMetaDivider">|</span>
-                      <span className="billMobileAmount">{formatMoney(b.amount)}</span>
-                      <span className="billMetaDivider">|</span>
-                      <span className={`billMobileStatus billMobileStatus-${status.tone}`}>
-                        {mobileStatus}
+                      <span className={`billMobileAmount billMobileAmount-${status.tone}`}>
+                        {formatMoney(b.amount)}
                       </span>
                     </div>
-                    {b.meta.lastPaid ? (
-                      <div className="billMobileMetaSecondary">
-                        {`Paid ${formatShortDate(b.meta.lastPaid)}`}
+                    {showDetails ? (
+                      <div className="billMobileRevealMeta">
+                        <span className={`billMobileRevealStatus billMobileStatus-${status.tone}`}>
+                          {mobileStatus}
+                        </span>
+                        {hasDueDate ? (
+                          <>
+                            <span className="billMetaDivider">•</span>
+                            <span className={`billMobileRevealDue dueMobileDelta-${status.tone}`}>
+                              {formatMobileDueDelta(b.meta.daysToDue)}
+                            </span>
+                          </>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -237,23 +256,14 @@ export default function BillsTable({
                 <td>
                   <div className="dueCell">
                     <span className="dueDesktopText">
-                      {hasDueDate ? formatShortDate(b.dueDate) : "No due date"}
+                      {hasDueDate ? formatDueDateCompact(b.dueDate) : "No due date"}
                     </span>
                     <span className="dueMobileText">
-                      {hasDueDate ? formatMobileDate(b.dueDate) : "No due date"}
+                      {hasDueDate ? formatDueDateCompact(b.dueDate) : "No due date"}
                     </span>
                     {hasDueDate ? (
                       <span className="muted small dueDesktopDelta">
-                        (
-                        {b.meta.daysToDue < 0
-                          ? `${Math.abs(b.meta.daysToDue)}d late`
-                          : `${b.meta.daysToDue}d`}
-                        )
-                      </span>
-                    ) : null}
-                    {hasDueDate ? (
-                      <span className="muted small dueMobileDelta">
-                        {formatMobileDueDelta(b.meta.daysToDue)}
+                        {formatDesktopDueDelta(b.meta.daysToDue)}
                       </span>
                     ) : null}
                   </div>
@@ -606,7 +616,7 @@ function formatCadenceLabel(cadence) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function formatMobileDate(isoDate) {
+function formatDueDateCompact(isoDate) {
   if (typeof isoDate !== "string") return formatShortDate(isoDate);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!m) return formatShortDate(isoDate);
@@ -618,6 +628,12 @@ function formatMobileDate(isoDate) {
 }
 
 function formatMobileDueDelta(daysToDue) {
+  if (daysToDue === 0) return "today";
+  if (daysToDue < 0) return `${Math.abs(daysToDue)}d late`;
+  return `${daysToDue}d`;
+}
+
+function formatDesktopDueDelta(daysToDue) {
   if (daysToDue === 0) return "today";
   if (daysToDue < 0) return `${Math.abs(daysToDue)}d late`;
   return `${daysToDue}d`;

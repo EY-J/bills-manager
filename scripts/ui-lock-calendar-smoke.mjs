@@ -206,6 +206,57 @@ async function waitForCondition(assertion, label, timeoutMs = 8_000) {
   throw new Error(`${label}: ${detail}`);
 }
 
+async function assertNoHorizontalOverflow(page, label) {
+  const metrics = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    bodyScrollWidth: document.body.scrollWidth,
+  }));
+
+  assert.ok(
+    metrics.documentScrollWidth <= metrics.innerWidth + 1,
+    `${label}: document overflow (${metrics.documentScrollWidth} > ${metrics.innerWidth})`
+  );
+  assert.ok(
+    metrics.bodyScrollWidth <= metrics.innerWidth + 1,
+    `${label}: body overflow (${metrics.bodyScrollWidth} > ${metrics.innerWidth})`
+  );
+}
+
+async function assertElementFitsWidth(page, selector, viewportWidth, label) {
+  const el = page.locator(selector).first();
+  await el.waitFor({ state: "visible", timeout: 10_000 });
+  const box = await el.boundingBox();
+  assert.ok(box, `${label}: missing bounding box for ${selector}`);
+  assert.ok(box.x >= -4, `${label}: left edge is out of bounds (${box.x})`);
+  assert.ok(
+    box.x + box.width <= viewportWidth + 4,
+    `${label}: right edge is out of bounds (${box.x + box.width} > ${viewportWidth})`
+  );
+}
+
+async function assertContainerScrollsIfNeeded(page, selector, label) {
+  const metrics = await page.evaluate((targetSelector) => {
+    const node = document.querySelector(targetSelector);
+    if (!(node instanceof HTMLElement)) return null;
+
+    const hasOverflow = node.scrollHeight > node.clientHeight + 1;
+    if (!hasOverflow) {
+      return { hasOverflow: false, scrollTopAfter: 0 };
+    }
+
+    node.scrollTop = Math.max(1, node.scrollHeight - node.clientHeight);
+    return { hasOverflow: true, scrollTopAfter: node.scrollTop };
+  }, selector);
+
+  assert.ok(metrics, `${label}: missing container ${selector}`);
+  if (!metrics.hasOverflow) return;
+  assert.ok(
+    Number(metrics.scrollTopAfter) > 0,
+    `${label}: container did not scroll despite overflow`
+  );
+}
+
 async function waitForTrackerOrAccountLocked(page, timeoutMs = 12_000) {
   const started = Date.now();
   let sawAccountLocked = false;
@@ -259,7 +310,7 @@ async function runAccountLockedDesktopCheck(page) {
   await modal.waitFor({ state: "hidden", timeout: 8_000 });
 }
 
-async function runCalendarMobileLegendCheck(
+async function runCalendarMobileDialogCheck(
   page,
   { allowAccountLockedSkip = false, requireExternalAccount = false } = {}
 ) {
@@ -283,7 +334,7 @@ async function runCalendarMobileLegendCheck(
         }
         return {
           status: "skip",
-          note: `Calendar legend checks skipped: ${authResult.reason}`,
+          note: `Calendar mobile checks skipped: ${authResult.reason}`,
         };
       }
       createdAccount = authResult;
@@ -310,7 +361,7 @@ async function runCalendarMobileLegendCheck(
         return {
           status: "skip",
           note:
-            "Calendar legend checks skipped: deployed app remained account-locked after auth setup.",
+            "Calendar mobile checks skipped: deployed app remained account-locked after auth setup.",
         };
       }
       throw new Error("Bills tracker did not unlock after seeded local session.");
@@ -319,43 +370,29 @@ async function runCalendarMobileLegendCheck(
     await page.getByTestId("mobile-nav-calendar").first().click();
     const calendarDialog = page.getByTestId("calendar-dialog").first();
     await calendarDialog.waitFor({ state: "visible", timeout: 8_000 });
+    const viewport = page.viewportSize();
+    assert.ok(viewport, "Missing viewport size for mobile calendar check");
+    await assertElementFitsWidth(
+      page,
+      '[data-testid="calendar-dialog"]',
+      viewport.width,
+      "Mobile calendar dialog width"
+    );
+    await assertNoHorizontalOverflow(page, "Mobile calendar open");
 
-    const legendToggle = page.getByTestId("calendar-legend-toggle").first();
-    const legendPopover = page.getByTestId("calendar-legend-popover").first();
+    const dueDay = page.getByTestId(`calendar-day-${todayIso}`).first();
+    await dueDay.waitFor({ state: "visible", timeout: 8_000 });
+    await dueDay.click();
+    await dueDay.locator(".calendarDayItemText").first().waitFor({
+      state: "visible",
+      timeout: 8_000,
+    });
 
-    const isLegendOpen = async () =>
-      legendPopover.evaluate((node) => node.classList.contains("isOpen"));
-
-    await legendToggle.click();
-    await waitForCondition(async () => {
-      assert.equal(await isLegendOpen(), true);
-    }, "Legend opens on tap");
-
-    await sleep(2500);
-    await waitForCondition(async () => {
-      assert.equal(await isLegendOpen(), false);
-    }, "Legend auto-hides after tap");
-
-    await legendToggle.click({ delay: 700 });
-    await waitForCondition(async () => {
-      assert.equal(await isLegendOpen(), true);
-    }, "Legend opens on long press");
-
-    await sleep(3000);
-    assert.equal(await isLegendOpen(), true, "Legend should stay visible longer after long press");
-
-    await sleep(2500);
-    await waitForCondition(async () => {
-      assert.equal(await isLegendOpen(), false);
-    }, "Legend eventually auto-hides after long press");
-
-    await page.getByTestId(`calendar-day-${todayIso}`).first().click();
-    const selectedPanel = page.getByTestId("calendar-selected-panel").first();
-    await selectedPanel.waitFor({ state: "visible", timeout: 8_000 });
-    await selectedPanel
-      .locator('[data-testid^="calendar-due-item-"]')
-      .first()
-      .waitFor({ state: "visible", timeout: 8_000 });
+    await assertContainerScrollsIfNeeded(
+      page,
+      ".calendarScheduleList",
+      "Mobile calendar month overview list"
+    );
 
     return { status: "pass" };
   } finally {
@@ -404,8 +441,8 @@ async function main() {
         hasTouch: true,
       });
       const page = await mobile.newPage();
-      console.log("Checking calendar modal + legend auto-hide behavior (mobile)...");
-      const mobileResult = await runCalendarMobileLegendCheck(page, {
+      console.log("Checking calendar modal responsive behavior (mobile)...");
+      const mobileResult = await runCalendarMobileDialogCheck(page, {
         allowAccountLockedSkip: isExternalRun,
         requireExternalAccount:
           isExternalRun && String(process.env.E2E_REQUIRE_ACCOUNT || "").trim() === "1",
